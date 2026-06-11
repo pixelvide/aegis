@@ -1,0 +1,50 @@
+# ── Environment ──────────────────────────────────────────────────
+.env
+.env.*
+!.env.example
+
+# ── Go ───────────────────────────────────────────────────────────
+# Compiled binary
+server/cmd/aegis-server/aegis-server
+
+# Embedded UI build output (copied during Docker build)
+server/cmd/aegis-server/ui/
+
+# ── Node / UI ────────────────────────────────────────────────────
+node_modules/
+ui/dist/
+ui/.vite/
+
+# ── Database ─────────────────────────────────────────────────────
+*.db
+*.sqlite
+*.sqlite3
+
+# ── OS ───────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+
+# ── IDE ──────────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.project
+.classpath
+.settings/
+
+# ── Logs ─────────────────────────────────────────────────────────
+*.log
+
+# ── Testing ──────────────────────────────────────────────────────
+coverage.out
+coverage.html
+*.test
+
+# ── Build artifacts ──────────────────────────────────────────────
+*.exe
+*.dll
+*.so
+*.dylib
+tmp/

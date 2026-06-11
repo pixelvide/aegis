@@ -1,0 +1,55 @@
+services:
+  # ── PostgreSQL ──────────────────────────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    container_name: aegis-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-aegis}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-aegis}
+      POSTGRES_DB: ${POSTGRES_DB:-aegis}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - aegis-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-aegis} -d ${POSTGRES_DB:-aegis}"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    networks:
+      - aegis
+
+  # ── Aegis Server (API + embedded UI) ────────────────────────────────────────
+  aegis-server:
+    build:
+      context: .
+      dockerfile: server/Dockerfile
+    container_name: aegis-server
+    restart: unless-stopped
+    ports:
+      - "${AEGIS_PORT:-8080}:8080"
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER:-aegis}:${POSTGRES_PASSWORD:-aegis}@postgres:5432/${POSTGRES_DB:-aegis}?sslmode=disable
+      JWT_SECRET: ${JWT_SECRET:-}
+      AEGIS_BIND: "0.0.0.0"
+      AEGIS_PORT: "8080"
+      AEGIS_ALLOWED_ORIGINS: ${AEGIS_ALLOWED_ORIGINS:-http://localhost:8080}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8080/healthz"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+    networks:
+      - aegis
+
+networks:
+  aegis:
+    driver: bridge
+
+volumes:
+  aegis-pgdata:

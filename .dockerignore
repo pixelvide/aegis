@@ -1,0 +1,19 @@
+node_modules
+.git
+.gitignore
+*.md
+.env
+.env.*
+!.env.example
+
+# Build artifacts
+server/cmd/aegis-server/aegis-server
+server/cmd/aegis-server/ui/
+ui/dist
+ui/node_modules
+
+# IDE
+.vscode
+.idea
+*.swp
+*.swo

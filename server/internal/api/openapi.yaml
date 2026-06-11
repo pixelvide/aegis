@@ -1,0 +1,1087 @@
+openapi: 3.0.3
+info:
+  title: Aegis API
+  description: |
+    AI-powered security scanning platform — multi-tenant SaaS with per-org data isolation.
+
+    ## Authentication
+    Most endpoints require authentication via an `aegis_token` HttpOnly cookie,
+    set by the login or register endpoints.
+
+    ## Multi-Tenancy
+    Org-scoped endpoints require an `X-Org-ID` or `X-Org-Slug` header to identify
+    which organization's data to access. The server verifies the user's membership
+    in that org before processing the request.
+  version: 0.1.0
+  contact:
+    name: Pixelvide
+    url: https://github.com/pixelvide/aegis
+
+servers:
+  - url: /api/v1
+    description: API v1
+
+tags:
+  - name: Auth
+    description: Authentication (public)
+  - name: Organizations
+    description: Org management (authenticated)
+  - name: Scans
+    description: Security scans (org-scoped)
+  - name: Findings
+    description: Vulnerability findings (org-scoped)
+  - name: Exploits
+    description: PoC exploits (org-scoped)
+  - name: Dashboard
+    description: Aggregate statistics (org-scoped)
+  - name: Projects
+    description: Project management (org-scoped)
+  - name: Members
+    description: Org member management (org-scoped)
+  - name: Config
+    description: Feature flags (authenticated)
+  - name: Health
+    description: Health and readiness probes (public)
+
+# ─── Paths ────────────────────────────────────────────────────────────────────
+
+paths:
+
+  # ── Auth ──────────────────────────────────────────────────────────────────
+
+  /auth/register:
+    post:
+      tags: [Auth]
+      summary: Register a new account
+      description: Creates a user, a default org, and sets the auth cookie. Gated by the `signup` feature flag.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RegisterRequest"
+      responses:
+        "201":
+          description: Registration successful
+          headers:
+            Set-Cookie:
+              description: "aegis_token HttpOnly cookie"
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  user:
+                    $ref: "#/components/schemas/User"
+                  message:
+                    type: string
+                    example: "registration successful"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          description: Registration disabled
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: Email already registered
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /auth/login:
+    post:
+      tags: [Auth]
+      summary: Sign in
+      description: Authenticates with email/password. Sets `aegis_token` HttpOnly cookie.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginRequest"
+      responses:
+        "200":
+          description: Login successful
+          headers:
+            Set-Cookie:
+              description: "aegis_token HttpOnly cookie"
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  user:
+                    $ref: "#/components/schemas/User"
+        "401":
+          description: Invalid email or password
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /auth/logout:
+    post:
+      tags: [Auth]
+      summary: Sign out
+      description: Clears the auth cookie.
+      responses:
+        "200":
+          description: Logged out
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: "logged out"
+
+  /auth/me:
+    get:
+      tags: [Auth]
+      summary: Current user
+      description: Returns the authenticated user and their organizations.
+      security:
+        - cookieAuth: []
+      responses:
+        "200":
+          description: Current user info
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  user:
+                    $ref: "#/components/schemas/User"
+                  orgs:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Organization"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  # ── Organizations ─────────────────────────────────────────────────────────
+
+  /orgs:
+    post:
+      tags: [Organizations]
+      summary: Create organization
+      description: Creates a new org. The creator becomes the owner.
+      security:
+        - cookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateOrgRequest"
+      responses:
+        "201":
+          description: Organization created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Organization"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+    get:
+      tags: [Organizations]
+      summary: List organizations
+      description: Returns the current user's organizations.
+      security:
+        - cookieAuth: []
+      responses:
+        "200":
+          description: List of organizations
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Organization"
+
+  /orgs/{slug}:
+    get:
+      tags: [Organizations]
+      summary: Get organization
+      description: Returns an organization by slug.
+      security:
+        - cookieAuth: []
+      parameters:
+        - $ref: "#/components/parameters/OrgSlugPath"
+      responses:
+        "200":
+          description: Organization details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Organization"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  # ── Scans ─────────────────────────────────────────────────────────────────
+
+  /scans:
+    post:
+      tags: [Scans]
+      summary: Start a scan
+      description: Creates a new scan and launches the agent process.
+      security:
+        - cookieAuth: []
+      parameters:
+        - $ref: "#/components/parameters/OrgHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateScanRequest"
+      responses:
+        "201":
+          description: Scan created and agent launched
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Scan"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+    get:
+      tags: [Scans]
+      summary: List scans
+      description: Returns all scans in the current org, newest first.
+      security:
+        - cookieAuth: []
+      parameters:
+        - $ref: "#/components/parameters/OrgHeader"
+      responses:
+        "200":
+          description: List of scans
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Scan"
+
+  /scans/{id}:
+    get:
+      tags: [Scans]
+      summary: Get scan
+      description: Returns scan details including finding summary.
+      security:
+        - cookieAuth: []
+      parameters:
+        - $ref: "#/components/parameters/OrgHeader"
+        - $ref: "#/components/parameters/IdPath"
+      responses:
+        "200":
+          description: Scan details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Scan"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    patch:
+      tags: [Scans]
+      summary: Update scan
+      description: Updates scan metadata (currently name only).
+      security:
+        - cookieAuth: []
+      parameters:
+        - $ref: "#/components/parameters/OrgHeader"
+        - $ref: "#/components/parameters/IdPath"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+      responses:
+        "200":
+          description: Updated scan
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Scan"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      tags: [Scans]
+      summary: Delete scan
+      description: Deletes a scan and all its findings.
+      security:
+        - cookieAuth: []
+      parameters:
+        - $ref: "#/components/parameters/OrgHeader"
+        - $ref: "#/components/parameters/IdPath"
+      responses:
+        "204":
+          description: Scan deleted
+
+  /scans/{id}/cancel:
+    post:
+      tags: [Scans]
+      summary: Cancel scan
+      description: Cancels a running or pending scan.
+      security:
+        - cookieAuth: []
+      parameters:
+        - $ref: "#/components/parameters/OrgHeader"
+        - $ref: "#/components/parameters/IdPath"
+      responses:
+        "200":
+          description: Scan cancelled
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Scan"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: Scan is not running or pending
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  # ── Findings ──────────────────────────────────────────────────────────────
+
+  /findings:
+    get:
+      tags: [Findings]
+      summary: List findings
+      description: Returns findings with optional filters.
+      security:
+        - cookieAuth: []
+      parameters:
+        - $ref: "#/components/parameters/OrgHeader"
+        - name: scan_id
+          in: query
+          schema:
+            type: string
+          description: Filter by scan ID
+        - name: severity
+          in: query
+          schema:
+            $ref: "#/components/schemas/Severity"
+          description: Filter by severity
+        - name: status
+          in: query
+          schema:
+            $ref: "#/components/schemas/FindingStatus"
+          description: Filter by triage status
+        - name: cwe
+          in: query
+          schema:
+            type: string
+          description: Filter by CWE ID
+      responses:
+        "200":
+          description: List of findings
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Finding"
+
+  /findings/{id}:
+    get:
+      tags: [Findings]
+      summary: Get finding
+      description: Returns full finding details with exploits.
+      security:
+        - cookieAuth: []
+      parameters:
+        - $ref: "#/components/parameters/OrgHeader"
+        - $ref: "#/components/parameters/IdPath"
+      responses:
+        "200":
+          description: Finding details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Finding"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    patch:
+      tags: [Findings]
+      summary: Update finding status
+      description: Triage a finding by updating its status.
+      security:
+        - cookieAuth: []
+      parameters:
+        - $ref: "#/components/parameters/OrgHeader"
+        - $ref: "#/components/parameters/IdPath"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status:
+                  $ref: "#/components/schemas/FindingStatus"
+      responses:
+        "200":
+          description: Updated finding
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Finding"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+
+  /findings/{id}/exploits:
+    get:
+      tags: [Exploits]
+      summary: List exploits
+      description: Returns all PoC exploits for a finding.
+      security:
+        - cookieAuth: []
+      parameters:
+        - $ref: "#/components/parameters/OrgHeader"
+        - $ref: "#/components/parameters/IdPath"
+      responses:
+        "200":
+          description: List of exploits
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Exploit"
+
+  /findings/{id}/exploits/{eid}:
+    get:
+      tags: [Exploits]
+      summary: Get exploit
+      description: Returns a specific exploit with source code.
+      security:
+        - cookieAuth: []
+      parameters:
+        - $ref: "#/components/parameters/OrgHeader"
+        - $ref: "#/components/parameters/IdPath"
+        - name: eid
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Exploit ID
+      responses:
+        "200":
+          description: Exploit details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Exploit"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  # ── Dashboard ─────────────────────────────────────────────────────────────
+
+  /dashboard/stats:
+    get:
+      tags: [Dashboard]
+      summary: Dashboard statistics
+      description: Returns aggregate statistics for the current org.
+      security:
+        - cookieAuth: []
+      parameters:
+        - $ref: "#/components/parameters/OrgHeader"
+      responses:
+        "200":
+          description: Dashboard stats
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DashboardStats"
+
+  # ── Projects ──────────────────────────────────────────────────────────────
+
+  /projects:
+    post:
+      tags: [Projects]
+      summary: Create project
+      description: Creates a project in the current org.
+      security:
+        - cookieAuth: []
+      parameters:
+        - $ref: "#/components/parameters/OrgHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateProjectRequest"
+      responses:
+        "201":
+          description: Project created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Project"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+    get:
+      tags: [Projects]
+      summary: List projects
+      description: Returns all projects in the current org.
+      security:
+        - cookieAuth: []
+      parameters:
+        - $ref: "#/components/parameters/OrgHeader"
+      responses:
+        "200":
+          description: List of projects
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Project"
+
+  /projects/{slug}:
+    get:
+      tags: [Projects]
+      summary: Get project
+      description: Returns a project by slug.
+      security:
+        - cookieAuth: []
+      parameters:
+        - $ref: "#/components/parameters/OrgHeader"
+        - $ref: "#/components/parameters/OrgSlugPath"
+      responses:
+        "200":
+          description: Project details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Project"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  # ── Members ───────────────────────────────────────────────────────────────
+
+  /members:
+    get:
+      tags: [Members]
+      summary: List members
+      description: Returns all members of the current org with roles.
+      security:
+        - cookieAuth: []
+      parameters:
+        - $ref: "#/components/parameters/OrgHeader"
+      responses:
+        "200":
+          description: List of members
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Member"
+
+  /members/invite:
+    post:
+      tags: [Members]
+      summary: Invite member
+      description: |
+        Invite a user by email. Creates a placeholder account if the user doesn't exist.
+        Requires owner or admin role.
+      security:
+        - cookieAuth: []
+      parameters:
+        - $ref: "#/components/parameters/OrgHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/InviteRequest"
+      responses:
+        "201":
+          description: Member invited
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  user_id:
+                    type: string
+                  email:
+                    type: string
+                  role:
+                    type: string
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          description: Insufficient permissions
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /members/{userId}:
+    delete:
+      tags: [Members]
+      summary: Remove member
+      description: Remove a member from the org. Requires owner or admin role. Cannot remove yourself.
+      security:
+        - cookieAuth: []
+      parameters:
+        - $ref: "#/components/parameters/OrgHeader"
+        - name: userId
+          in: path
+          required: true
+          schema:
+            type: string
+          description: User ID to remove
+      responses:
+        "204":
+          description: Member removed
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          description: Insufficient permissions
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  # ── Config ────────────────────────────────────────────────────────────────
+
+  /config/features:
+    get:
+      tags: [Config]
+      summary: List feature flags
+      description: Returns all feature flags.
+      security:
+        - cookieAuth: []
+      responses:
+        "200":
+          description: List of feature flags
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/FeatureFlag"
+
+# ─── Components ───────────────────────────────────────────────────────────────
+
+components:
+
+  securitySchemes:
+    cookieAuth:
+      type: apiKey
+      in: cookie
+      name: aegis_token
+      description: JWT HttpOnly cookie set by login/register
+
+  parameters:
+    OrgHeader:
+      name: X-Org-Slug
+      in: header
+      required: true
+      schema:
+        type: string
+      description: Organization slug (or use X-Org-ID with the org UUID)
+    IdPath:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+      description: Resource ID
+    OrgSlugPath:
+      name: slug
+      in: path
+      required: true
+      schema:
+        type: string
+      description: URL-friendly slug
+
+  responses:
+    BadRequest:
+      description: Invalid request
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Unauthorized:
+      description: Authentication required
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+
+  schemas:
+
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+          example: "invalid request body"
+
+    # ── Auth Schemas ──────────────────────────────────────────────────────
+
+    RegisterRequest:
+      type: object
+      required: [email, password, name]
+      properties:
+        email:
+          type: string
+          format: email
+          example: "user@example.com"
+        password:
+          type: string
+          minLength: 8
+          description: "Must contain uppercase, lowercase, and a digit"
+          example: "SecureP@ss1"
+        name:
+          type: string
+          example: "John Doe"
+
+    LoginRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email:
+          type: string
+          format: email
+          example: "user@example.com"
+        password:
+          type: string
+          example: "SecureP@ss1"
+
+    User:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        email:
+          type: string
+          format: email
+        name:
+          type: string
+        avatar_url:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+
+    # ── Organization Schemas ──────────────────────────────────────────────
+
+    Organization:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        slug:
+          type: string
+        plan:
+          type: string
+          enum: [free, pro, enterprise]
+        created_at:
+          type: string
+          format: date-time
+
+    CreateOrgRequest:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+          example: "Acme Corp"
+        slug:
+          type: string
+          description: "Auto-generated from name if omitted"
+          example: "acme-corp"
+        plan:
+          type: string
+          enum: [free, pro, enterprise]
+          default: "free"
+
+    # ── Scan Schemas ──────────────────────────────────────────────────────
+
+    Target:
+      type: object
+      required: [type]
+      properties:
+        type:
+          type: string
+          enum: [path, git, url]
+        path:
+          type: string
+          description: "Local filesystem path (when type=path)"
+        url:
+          type: string
+          description: "Repository URL (when type=git or url)"
+        ref:
+          type: string
+          description: "Git branch/tag (when type=git)"
+
+    Summary:
+      type: object
+      properties:
+        total:
+          type: integer
+        critical:
+          type: integer
+        high:
+          type: integer
+        medium:
+          type: integer
+        low:
+          type: integer
+        info:
+          type: integer
+
+    Scan:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        target:
+          $ref: "#/components/schemas/Target"
+        persona:
+          type: string
+          enum: [sharingan, senku, killua]
+        mode:
+          type: string
+          enum: [direct, docker]
+        status:
+          $ref: "#/components/schemas/ScanStatus"
+        prompt:
+          type: string
+        agent_pid:
+          type: integer
+        conversation_id:
+          type: string
+        workspace_path:
+          type: string
+        finding_count:
+          type: integer
+        summary:
+          $ref: "#/components/schemas/Summary"
+        error_message:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        started_at:
+          type: string
+          format: date-time
+        completed_at:
+          type: string
+          format: date-time
+
+    ScanStatus:
+      type: string
+      enum: [pending, running, completed, failed, cancelled]
+
+    CreateScanRequest:
+      type: object
+      required: [target]
+      properties:
+        name:
+          type: string
+          description: "Display name (auto-generated if empty)"
+        target:
+          $ref: "#/components/schemas/Target"
+        persona:
+          type: string
+          enum: [sharingan, senku, killua]
+          default: "sharingan"
+        mode:
+          type: string
+          enum: [direct, docker]
+          default: "direct"
+        prompt:
+          type: string
+          description: "Optional focus instructions for the agent"
+
+    # ── Finding Schemas ───────────────────────────────────────────────────
+
+    Severity:
+      type: string
+      enum: [critical, high, medium, low, info]
+
+    FindingStatus:
+      type: string
+      enum: [open, confirmed, fixed, false_positive, wontfix]
+
+    Finding:
+      type: object
+      properties:
+        id:
+          type: string
+          description: "Finding ID (e.g., AEGIS-001)"
+        scan_id:
+          type: string
+        title:
+          type: string
+        severity:
+          $ref: "#/components/schemas/Severity"
+        cwe:
+          type: string
+        owasp:
+          type: string
+        file:
+          type: string
+        line:
+          type: integer
+        status:
+          $ref: "#/components/schemas/FindingStatus"
+        description:
+          type: string
+          description: "Markdown body"
+        exploits:
+          type: array
+          items:
+            $ref: "#/components/schemas/Exploit"
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    Exploit:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        finding_id:
+          type: string
+        filename:
+          type: string
+          description: "e.g., exploit.sh, exploit.py"
+        language:
+          type: string
+          description: "e.g., bash, python, javascript"
+        code:
+          type: string
+          description: "Source code of the exploit"
+        validated:
+          type: boolean
+
+    # ── Dashboard Schemas ─────────────────────────────────────────────────
+
+    DashboardStats:
+      type: object
+      properties:
+        total_scans:
+          type: integer
+        active_scans:
+          type: integer
+        total_findings:
+          type: integer
+        severity_breakdown:
+          $ref: "#/components/schemas/Summary"
+        recent_findings:
+          type: array
+          items:
+            $ref: "#/components/schemas/Finding"
+
+    # ── Project Schemas ───────────────────────────────────────────────────
+
+    Project:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        slug:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+
+    CreateProjectRequest:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+          example: "Backend API"
+        slug:
+          type: string
+          description: "Auto-generated from name if omitted"
+          example: "backend-api"
+
+    # ── Member Schemas ────────────────────────────────────────────────────
+
+    Member:
+      type: object
+      properties:
+        user_id:
+          type: string
+          format: uuid
+        email:
+          type: string
+          format: email
+        name:
+          type: string
+        avatar_url:
+          type: string
+        role:
+          $ref: "#/components/schemas/OrgRole"
+
+    OrgRole:
+      type: string
+      enum: [owner, admin, member, viewer]
+
+    InviteRequest:
+      type: object
+      required: [email]
+      properties:
+        email:
+          type: string
+          format: email
+          example: "new@example.com"
+        role:
+          $ref: "#/components/schemas/OrgRole"
+
+    # ── Config Schemas ────────────────────────────────────────────────────
+
+    FeatureFlag:
+      type: object
+      properties:
+        name:
+          type: string
+        enabled:
+          type: boolean
+        description:
+          type: string
