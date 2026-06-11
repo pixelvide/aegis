@@ -19,15 +19,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Enable corepack & activate pnpm
+        run: corepack enable && corepack prepare pnpm@10 --activate
+
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
-          cache: npm
-          cache-dependency-path: ui/package-lock.json
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: ui/pnpm-lock.yaml
 
-      - run: npm ci --ignore-scripts
-      - run: npm run lint
-      - run: npm run build
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm run lint
+      - run: pnpm run build
 
   server:
     name: Server — Vet & Build
