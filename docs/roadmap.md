@@ -11,24 +11,27 @@ This document tracks planned features, improvements, and technical debt for the 
 High-priority items to make the existing platform fully functional end-to-end.
 
 ### Token Management UI
-- **Status:** Not started
+- **Status:** ✅ Completed (2026-06-11)
 - **Priority:** 🔴 Critical
-- **Description:** Create a settings tab (or dedicated page) for managing API tokens. Users need to create, view, and revoke tokens from the UI.
-- **Requirements:**
-  - Token creation form (name, project scope, expiry)
-  - Show plaintext token once after creation (with copy button)
-  - List tokens with prefix, name, created date, last used, expiry
-  - Revoke button with confirmation
+- **Description:** API Tokens tab in Settings page for managing agent authentication tokens.
+- **Implemented:**
+  - Token creation dialog (name, project scope, expiry)
+  - Show plaintext token once after creation (with copy button + security warning)
+  - List tokens with prefix, name, project scope, expiry, status (active/expired/revoked)
+  - Revoke button per token
+  - `tokensApi` client (create, list, revoke)
 
 ### Finding Detail Enhancements
-- **Status:** Not started
+- **Status:** ✅ Completed (2026-06-11)
 - **Priority:** 🔴 Critical
-- **Description:** Update finding detail page to display new fields: fingerprint, CVE/CVSS, source, seen count, verification status.
-- **Requirements:**
-  - Show CVE link (to NVD) and CVSS score badge
-  - Display `seen_count` and `last_seen_at` for dedup visibility
-  - Show `verified` status with visual indicator
-  - Show `source` tag (e.g., CI run ID)
+- **Description:** Finding detail page displays agent-pushed metadata: CVE, CVSS score (color-coded), seen count, last seen at, verification status.
+- **Implemented:**
+  - CVE display in sidebar details
+  - CVSS score with color indicator (red ≥9.0, orange ≥7.0, amber ≥4.0, blue <4.0)
+  - `seen_count` display ("Seen N times") when >1 for dedup visibility
+  - `last_seen_at` timestamp when different from created_at
+  - `verified` status added to findings list filter dropdown
+  - Project filter dropdown on findings list page
 
 ---
 
@@ -128,17 +131,111 @@ Introduce per-org feature control and org versioning to allow independent featur
 
 Enterprise-grade controls for managing who can access an org and how.
 
-### Role-Based Access Control (RBAC)
+### Two-Level Role-Based Access Control (RBAC)
 - **Status:** Not started
-- **Priority:** 🟡 Medium
-- **Description:** Roles (`owner`, `admin`, `member`, `viewer`) exist in the data model but aren't enforced in any handler.
-- **Requirements:**
-  - `viewer` — read-only access to scans/findings
-  - `member` — create scans, triage findings
-  - `admin` — manage members, delete scans, manage projects, manage org feature flags
-  - `owner` — full access including org deletion and role management
-  - Middleware or per-handler checks
-  - UI should hide/disable actions based on role
+- **Priority:** 🔴 Critical
+- **Description:** Implement a two-tier RBAC system with **org-level roles** (controlling org-wide access) and **project-level roles** (controlling per-project access). Roles exist in the data model (`owner`, `admin`, `member`, `viewer`) but are not enforced in any handler today. This design is inspired by Langfuse's RBAC model, adapted for Aegis's security scanning domain.
+
+#### Design Overview
+
+Aegis RBAC operates at two scopes:
+
+1. **Org-level role** — set in `common.org_members.role`. Determines default access to all projects in the org and controls org-wide resources (members, feature flags, billing, audit logs).
+2. **Project-level role** — set in `org_<uuid>.project_members`. Overrides the org-level default for a specific project. Enables granting access to individual projects without org-wide visibility.
+
+**Resolution logic:**
+```
+effective_access(user, project) =
+    project_role(user, project)    ← if explicitly assigned
+    ?? org_role(user)              ← fallback to org-level default
+```
+
+- Org `Owner` → gets Owner-level access to **all** projects by default (unless overridden)
+- Org `None` + Project `Member` on "Backend API" → can only see that one project's findings/scans
+- Org `Member` + Project `Admin` on "Mobile App" → elevated access on that specific project
+
+#### Org Roles: `owner`, `admin`, `member`, `viewer`, `none`
+
+| | **Owner** | **Admin** | **Member** | **Viewer** | **None** |
+|---|---|---|---|---|---|
+| **Organization** | CRUD, delete, transfer | update | — | — | — |
+| **Org Members** | CUD, read | CUD, read | read | — | — |
+| **Projects** | create, delete | create | — | — | — |
+| **Org Feature Flags** | CUD, read | CUD, read | — | — | — |
+| **Billing / Plan** | CRUD | read | — | — | — |
+| **Audit Logs** | read | read | — | — | — |
+| **API Tokens (org-wide)** | CUD, read | CUD, read | — | — | — |
+
+- **Owner**: Full control — org deletion, ownership transfer, billing, all resources.
+- **Admin**: Manage members, projects, tokens, feature flags. Cannot delete org or transfer ownership.
+- **Member**: Read-only view of org members. Primary access is through project-level scopes (see below).
+- **Viewer**: No org-level scopes. Read-only access to projects they can see (all projects, since org role is the default floor).
+- **None**: No org-wide access at all. User must be explicitly granted project-level roles to access anything. Useful for external contractors, auditors, or per-team scoping.
+
+#### Project-Level Scopes (inherited from org role as default)
+
+When a user has an org role but no explicit project role, the org role determines their default project-level access across **all** projects:
+
+| | **Owner** | **Admin** | **Member** | **Viewer** | **None** |
+|---|---|---|---|---|---|
+| **Project Settings** | read, update, delete | read, update | read | read | — |
+| **Project Members** | CUD, read | CUD, read | read | — | — |
+| **Findings** | CUD, read | CUD, read | CUD, read | read | — |
+| **Scans** | CUD, read, delete | CUD, read | create, read | read | — |
+| **Exploits** | CUD, read | CUD, read | read | read | — |
+| **API Tokens (project-scoped)** | CUD, read | CUD, read | read | — | — |
+| **Dashboard / Stats** | read | read | read | read | — |
+
+Key notes:
+- **Member** can create scans and triage findings (CUD on findings = change status, add notes) but cannot delete scans or manage project members.
+- **Viewer** is strictly read-only across all project resources.
+- **None** gets zero access unless a project-level role is explicitly assigned.
+
+#### Project-Level Roles (TBD)
+
+Project-level roles allow overriding the org-level default for a specific project. The exact project roles and their scopes will be defined in a future iteration.
+
+**Expected roles:** `admin`, `member`, `viewer` (no `owner` or `none` at project level — those are org-level concepts).
+
+**Expected storage:** `org_<uuid>.project_members` table:
+```sql
+CREATE TABLE project_members (
+    project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    user_id    UUID NOT NULL REFERENCES common.users(id) ON DELETE CASCADE,
+    role       TEXT NOT NULL DEFAULT 'member',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (project_id, user_id)
+);
+```
+
+#### Implementation Requirements
+
+**Data model changes:**
+- Add `none` as a valid org role in `common.org_members.role`
+- Create `org_<uuid>.project_members` table (new table in org schema)
+- Update `ProvisionOrgSchema()` to include `project_members` table
+- Add migration for existing org schemas
+
+**Backend (Go server):**
+- **RBAC middleware or per-handler checks** — extract user's org role from `common.org_members`, check project role from `project_members` if applicable, compute effective role
+- **Scope-checking helper:** `hasPermission(ctx, resource, action) bool` — used in each handler to gate access
+- Define permissions as constants: `PermFindingsRead`, `PermFindingsCUD`, `PermMembersRead`, `PermMembersCUD`, `PermProjectsCreate`, `PermOrgDelete`, etc.
+- Map each role to its set of permissions (org-level and project-level separately)
+- Return `403 Forbidden` with `{"error": "insufficient permissions"}` when a user lacks the required scope
+
+**Frontend (React UI):**
+- Fetch user's effective role via `GET /api/v1/auth/me` (org role) and project context
+- Expose role in `useAuth()` or `useOrg()` context
+- Hide/disable UI elements based on role (e.g., hide "Create Project" button for `member`, hide "Delete" for `viewer`)
+- Role dropdown in member management (Settings → Members tab) with tooltip showing what each role can do (like Langfuse's pattern)
+
+**API changes:**
+- `GET /api/v1/members` — include role in response (already done)
+- `PATCH /api/v1/members/{userId}` — change a member's org role (new endpoint, admin+ only)
+- `GET /api/v1/projects/{slug}/members` — list project members with roles (new)
+- `POST /api/v1/projects/{slug}/members` — add project member with role (new)
+- `PATCH /api/v1/projects/{slug}/members/{userId}` — change project role (new)
+- `DELETE /api/v1/projects/{slug}/members/{userId}` — remove project member (new)
 
 ### MFA Enforcement
 - **Status:** ✅ Completed (2026-06-11)
@@ -336,6 +433,17 @@ Hardening features for session integrity, threat detection, and token lifecycle.
   - Add CSP header in `ServeHTTP` alongside existing security headers
   - Consider `report-uri` / `report-to` for monitoring violations in production
 
+### Cookie Security Hardening
+- **Status:** Not started
+- **Priority:** 🟡 Medium
+- **Description:** Harden auth cookies with `Secure` flag and `__Secure-` prefix once HTTPS is enforced in production. Currently cookies use `HttpOnly`, `SameSite=Lax`, and `Path=/` but lack `Secure: true` (which would break local HTTP dev).
+- **Requirements:**
+  - Add `Secure: true` to all auth cookies (requires HTTPS)
+  - Rename cookie from `aegis_token` to `__Secure-aegis_token` (browser enforces Secure + no Domain override)
+  - Note: `__Host-` prefix cannot be used because it disallows `Domain` attribute, which is required for cross-subdomain cookie sharing
+  - Consider making Secure flag configurable via env var for dev vs prod
+  - Add CSRF token protection for all mutating cookie-authenticated endpoints (see CSRF Token Protection item)
+
 ### Password History
 - **Status:** Not started
 - **Priority:** 🟢 Low
@@ -469,13 +577,350 @@ Hardening features for session integrity, threat detection, and token lifecycle.
 
 | Item | Description | Priority |
 |---|---|---|
+| **Standardized API response format** | No consistent response envelope — each endpoint invents its own shape; no pagination on list endpoints | 🔴 Critical |
+| **Structured error codes** | All API errors return `{"error": "message"}` — no machine-readable codes for programmatic handling | 🔴 Critical |
 | Error boundaries | No React error boundaries — unhandled errors crash the whole app | 🟡 Medium |
 | Loading states | Some pages show raw empty states before data loads | 🟢 Low |
-| API pagination | `ListFindings` returns all records — needs pagination for scale | 🟡 Medium |
 | Test suite | No unit tests or integration tests exist | 🟡 Medium |
 | Rate limiting | No rate limiting on auth or agent ingest endpoints | 🟡 Medium |
 | OpenAPI spec update | Swagger spec needs agent ingest + token endpoints added | 🟡 Medium |
 | Feature flag consistency | Migrate all feature-gated behavior to use the two-tier flag system (global + org) | 🟡 Medium |
+| **Request trace IDs** | No request ID generated per request — logs, errors, and API responses can't be correlated for debugging | 🔴 Critical |
+
+### Standardized API Response Envelope & Pagination
+- **Status:** Not started
+- **Priority:** 🔴 Critical
+- **Description:** Every API endpoint currently returns a different response shape — some return raw models, some wrap in ad-hoc `map[string]any`, some return raw arrays, and list endpoints have zero pagination. This makes the UI fragile (every endpoint needs custom parsing) and list endpoints will break at scale. The API needs a single, consistent response envelope for all success responses, plus cursor/offset pagination for all list endpoints.
+
+- **Current inconsistencies:**
+
+  | Endpoint | Current Response | Problem |
+  |---|---|---|
+  | `GET /findings` | `[{...}, {...}]` | Raw array, no pagination |
+  | `GET /orgs` | `{"orgs": [...], "base_domain": "..."}` | Ad-hoc wrapper with extra fields |
+  | `GET /auth/me` | `{"user": {...}, "orgs": [...]}` | Different ad-hoc wrapper |
+  | `POST /auth/register` | `{"user": {...}, "message": "..."}` | Mixed data + status message |
+  | `POST /auth/login` (MFA) | `{"mfa_required": true, "mfa_token": "...", "mfa_methods": [...]}` | Completely custom |
+  | `GET /projects` | `[{...}]` | Raw array, no metadata |
+  | `POST /tokens` | `{"token": "...", "info": {...}}` | Custom struct |
+  | `POST /auth/logout` | `{"message": "logged out"}` | Message-only, no data |
+  | `DELETE /tokens/{id}` | *(empty body, 204)* | No body at all |
+
+- **Standard response format (proposed):**
+
+  **Single resource:**
+  ```json
+  {
+    "data": {
+      "id": "uuid",
+      "name": "Example"
+    }
+  }
+  ```
+
+  **List (paginated):**
+  ```json
+  {
+    "data": [
+      {"id": "uuid-1", "title": "XSS in login"},
+      {"id": "uuid-2", "title": "SQL injection"}
+    ],
+    "pagination": {
+      "page": 1,
+      "per_page": 25,
+      "total": 142,
+      "total_pages": 6,
+      "has_next": true,
+      "has_prev": false
+    }
+  }
+  ```
+
+  **Action/mutation result (login, logout, password reset, etc.):**
+  ```json
+  {
+    "data": { "user": {...} },
+    "message": "Registration successful"
+  }
+  ```
+
+  **Error (see Structured Error Codes section below):**
+  ```json
+  {
+    "error": "ERROR_CODE",
+    "message": "Human-readable description"
+  }
+  ```
+
+  **Empty (204 No Content):** No body — unchanged.
+
+- **Pagination design:**
+
+  | Parameter | Type | Default | Description |
+  |---|---|---|---|
+  | `page` | query int | `1` | Page number (1-indexed) |
+  | `per_page` | query int | `25` | Items per page (max 100) |
+  | `sort` | query string | varies | Sort field (e.g., `created_at`, `severity`) |
+  | `order` | query string | `desc` | Sort direction: `asc` or `desc` |
+
+  **Endpoints requiring pagination:**
+  - `GET /findings` — most critical, can grow to thousands per org
+  - `GET /scans` — moderate growth
+  - `GET /projects` — low volume but should be consistent
+  - `GET /members` — low volume but should be consistent
+  - `GET /tokens` — low volume but should be consistent
+  - `GET /agent/findings` — agent API, can be high volume
+  - `GET /profile/sessions` — low volume
+  - `GET /profile/emails` — very low volume, pagination optional
+
+  **Cursor-based pagination (future):** For real-time data (audit logs, notifications), add cursor-based pagination using `cursor` + `limit` parameters. Not needed for v1.
+
+- **Backend changes (Go server):**
+  1. **New response helpers in `api/response.go`:**
+     ```go
+     // writeData wraps a single resource in {"data": ...}
+     func writeData(w http.ResponseWriter, status int, data any)
+     
+     // writeDataMessage wraps a resource with a message: {"data": ..., "message": "..."}
+     func writeDataMessage(w http.ResponseWriter, status int, data any, msg string)
+     
+     // writeList wraps a paginated list: {"data": [...], "pagination": {...}}
+     func writeList(w http.ResponseWriter, data any, pagination Pagination)
+     
+     // writMessage wraps a simple message: {"message": "..."}
+     func writeMessage(w http.ResponseWriter, status int, msg string)
+     ```
+  2. **Pagination struct and query parser:**
+     ```go
+     type Pagination struct {
+         Page       int  `json:"page"`
+         PerPage    int  `json:"per_page"`
+         Total      int  `json:"total"`
+         TotalPages int  `json:"total_pages"`
+         HasNext    bool `json:"has_next"`
+         HasPrev    bool `json:"has_prev"`
+     }
+     
+     func parsePagination(r *http.Request) (page, perPage int)
+     ```
+  3. **Store layer changes:** Add `COUNT(*)` queries alongside list queries, or use `COUNT(*) OVER()` window function for single-query pagination. Update `Store` interface methods to accept pagination params and return `(items, total, error)`.
+  4. **Migrate all handlers:** Replace `writeJSON(w, status, rawData)` → `writeData(w, status, rawData)` for single resources, and `writeJSON(w, status, items)` → `writeList(w, items, pagination)` for lists.
+  5. **Keep `writeJSON` as internal:** Retained for health checks and other non-API responses that don't need enveloping.
+
+- **Frontend changes (React UI):**
+  1. **Update `request()` helper** to unwrap `data` field from responses:
+     ```typescript
+     // Generic request that auto-unwraps the envelope
+     async function request<T>(path: string, options?: RequestInit): Promise<T> {
+       const res = await fetch(...);
+       const body = await res.json();
+       return body.data as T;  // unwrap envelope
+     }
+     
+     // For paginated lists
+     async function requestList<T>(path: string, params?: PaginationParams): Promise<PaginatedResponse<T>> {
+       // returns { data: T[], pagination: {...} }
+     }
+     ```
+  2. **Add pagination types:**
+     ```typescript
+     interface Pagination {
+       page: number;
+       per_page: number;
+       total: number;
+       total_pages: number;
+       has_next: boolean;
+       has_prev: boolean;
+     }
+     
+     interface PaginatedResponse<T> {
+       data: T[];
+       pagination: Pagination;
+     }
+     ```
+  3. **Create shared `<PaginationControls>` component** — page navigation, per-page selector, total count display. Reusable across Findings, Scans, Projects, Members pages.
+  4. **Update all list pages** to use `requestList()` and render pagination controls.
+
+- **Migration strategy:**
+  - **Phase 1:** Add new response helpers (`writeData`, `writeList`, etc.) alongside existing `writeJSON`. Migrate endpoints one file at a time.
+  - **Phase 2:** Update UI `request()` to detect enveloped responses (check for `data` key) and unwrap, while falling back to raw response for not-yet-migrated endpoints.
+  - **Phase 3:** Add pagination to `GET /findings` first (highest volume), then roll out to other list endpoints.
+  - **Phase 4:** Remove old `writeJSON` calls from API handlers once all endpoints are migrated.
+
+- **Rules (to add to AGENTS.md after implementation):**
+  1. All success responses MUST use the standard envelope (`writeData`, `writeList`, `writeDataMessage`, or `writeMessage`). Direct `writeJSON` is only for non-API responses (health checks, metrics).
+  2. All list endpoints MUST support pagination via `page` and `per_page` query parameters.
+  3. List endpoints MUST return empty arrays (`[]`), never `null`, in the `data` field.
+  4. Single-resource endpoints return the resource directly inside `data`, not wrapped in another named key (e.g., `{"data": {"id": "..."}}`, not `{"data": {"user": {"id": "..."}}}`).
+  5. The `message` field in success responses is optional and used only for action confirmations (login, logout, password reset, etc.).
+  6. `204 No Content` responses (DELETE operations) have no body — do not envelope these.
+  7. Maximum `per_page` is 100. Default is 25. Values outside range are clamped, not rejected.
+
+### Structured Error Codes
+- **Status:** Not started
+- **Priority:** 🔴 Critical
+- **Description:** Replace all `{"error": "message"}` responses with structured `{"error": "ERROR_CODE", "message": "Human-readable description"}` format. Currently, `writeError()` returns only a human-readable string, forcing the UI to string-match on error messages — which is fragile, breaks on wording changes, and blocks i18n. Two endpoints already use codes (`email_not_verified`, `auth_base_domain_only`), proving the pattern works, but the rest of the API (~200+ call sites) uses plain strings.
+
+- **Error response format (new):**
+  ```json
+  {
+    "error": "INVALID_CREDENTIALS",
+    "message": "Invalid email or password"
+  }
+  ```
+  For validation errors with field-level detail:
+  ```json
+  {
+    "error": "VALIDATION_ERROR",
+    "message": "Invalid request",
+    "details": [
+      {"field": "email", "message": "invalid email address"},
+      {"field": "password", "message": "must be at least 8 characters"}
+    ]
+  }
+  ```
+
+- **Error code categories (namespaced by domain):**
+
+  | Category | Codes | Used By |
+  |---|---|---|
+  | **Auth** | `AUTH_NOT_AUTHENTICATED`, `AUTH_INVALID_CREDENTIALS`, `AUTH_EMAIL_NOT_VERIFIED`, `AUTH_MFA_REQUIRED`, `AUTH_MFA_INVALID_CODE`, `AUTH_SESSION_REVOKED`, `AUTH_BASE_DOMAIN_ONLY` | Login, registration, MFA flows |
+  | **Token** | `TOKEN_INVALID`, `TOKEN_EXPIRED`, `TOKEN_REVOKED`, `TOKEN_SCOPE_MISMATCH` | Agent API, token auth |
+  | **Tenant** | `TENANT_NOT_FOUND`, `TENANT_NOT_MEMBER`, `TENANT_SLUG_TAKEN`, `TENANT_SLUG_RESERVED` | Org resolution, org creation |
+  | **Resource** | `RESOURCE_NOT_FOUND`, `RESOURCE_CONFLICT`, `RESOURCE_ALREADY_EXISTS` | CRUD on findings, projects, members, etc. |
+  | **Validation** | `VALIDATION_ERROR`, `INVALID_REQUEST_BODY`, `FIELD_REQUIRED`, `FIELD_TOO_LONG`, `FIELD_INVALID_FORMAT` | All input validation |
+  | **Permission** | `PERMISSION_DENIED`, `FEATURE_DISABLED`, `MFA_REQUIRED_BY_ORG` | RBAC, feature flags, org policies |
+  | **Rate Limit** | `RATE_LIMIT_EXCEEDED` | Future rate limiting |
+  | **Server** | `INTERNAL_ERROR`, `SERVICE_UNAVAILABLE` | Catch-all for 500s |
+
+- **Backend changes (Go server):**
+  1. Define error codes as constants in a new `api/errors.go` file
+  2. Change `writeError(w, status, msg)` signature to `writeError(w, status, code, msg)` — breaking change, update all ~200 call sites
+  3. Add `writeValidationError(w, details)` helper for field-level errors
+  4. Update middleware (Auth, TenantResolver, TokenAuth) to use codes
+  5. Ensure codes are included in structured logging (`slog`) for grep-ability
+  6. Update OpenAPI spec to document error codes per endpoint
+
+- **Frontend changes (React UI):**
+  1. Update `request()` helper in `lib/api.ts` to parse `error` as code and `message` as display text
+  2. Create an `errorCodes.ts` constants file mirroring the server codes
+  3. Replace string-matching error checks with code-based switches
+  4. Show error-specific UI (e.g., `AUTH_EMAIL_NOT_VERIFIED` → verification banner, `AUTH_MFA_REQUIRED` → MFA challenge, `FEATURE_DISABLED` → upgrade prompt)
+  5. Use `message` field for user-facing toasts/alerts
+
+- **Migration strategy:**
+  - Backward-compatible: the `error` field still exists, just now contains a code instead of a message. The new `message` field provides the human-readable text.
+  - UI can check for the presence of `message` to detect the new format and fall back to `error` as the display text for any old-format responses during rollout.
+
+- **Rules (to add to AGENTS.md after implementation):**
+  1. Every `writeError()` call MUST include an error code constant — never pass a raw string as the code.
+  2. Error codes are UPPER_SNAKE_CASE and namespaced by domain (e.g., `AUTH_`, `TENANT_`, `VALIDATION_`).
+  3. Error messages are human-readable and MAY change — codes are the stable contract.
+  4. New error scenarios MUST define a new code — never reuse an existing code for a different meaning.
+  5. All error codes MUST be documented in the OpenAPI spec.
+
+### Request Trace IDs
+- **Status:** Not started
+- **Priority:** 🔴 Critical
+- **Description:** Generate a unique request ID for every API request and propagate it through the entire request lifecycle — logs, error responses, and response headers. Without this, debugging production issues is nearly impossible: you see an error in the UI, but there's no way to find the corresponding server-side logs. The infrastructure is already partially built (`logger.FromContext()` exists with commented-out OTel trace injection, and OTel metrics are already exported), but nothing generates or propagates a request ID today.
+
+- **What a trace ID enables:**
+
+  | Layer | Without Trace ID | With Trace ID |
+  |---|---|---|
+  | **User sees error** | "Internal error" — no way to report it | "Internal error (request_id: `abc123`)" — user can share with support |
+  | **Server logs** | Grep by timestamp and hope | `grep abc123 server.log` → full request context |
+  | **Error responses** | `{"error": "INTERNAL_ERROR", "message": "..."}` | `{"error": "INTERNAL_ERROR", "message": "...", "request_id": "abc123"}` |
+  | **Observability** | Metrics only (counters, histograms) | Metrics + distributed traces in Jaeger/Tempo |
+  | **Cross-service** | N/A (single binary today) | Ready for microservice split — trace propagation via `traceparent` header |
+
+- **Request ID format:** `req_<ulid>` (e.g., `req_01HXYZ...`) — ULIDs are sortable, unique, and encode a timestamp. Alternative: UUID v7 (also time-ordered).
+
+- **Implementation:**
+
+  **1. Request ID middleware (`middleware/request_id.go`):**
+  ```go
+  func RequestID(next http.Handler) http.Handler {
+      return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+          // Accept incoming trace ID from reverse proxy / load balancer
+          reqID := r.Header.Get("X-Request-ID")
+          if reqID == "" {
+              reqID = "req_" + ulid.Make().String()
+          }
+          
+          // Inject into context
+          ctx := context.WithValue(r.Context(), requestIDKey, reqID)
+          
+          // Set response header so the client always sees it
+          w.Header().Set("X-Request-ID", reqID)
+          
+          next.ServeHTTP(w, r.WithContext(ctx))
+      })
+  }
+  ```
+
+  **2. Logger integration — activate `logger.FromContext()`:**
+  ```go
+  func FromContext(ctx context.Context) *slog.Logger {
+      logger := slog.Default()
+      if reqID, ok := ctx.Value(requestIDKey).(string); ok {
+          logger = logger.With("request_id", reqID)
+      }
+      // Future OTel: also add trace_id, span_id from span context
+      return logger
+  }
+  ```
+  Every log line from a request handler automatically includes the request ID:
+  ```
+  level=ERROR msg="failed to save finding" request_id=req_01HXYZ... error="unique constraint violation"
+  ```
+
+  **3. Error response integration — include in all error responses:**
+  ```go
+  func writeError(w http.ResponseWriter, r *http.Request, status int, code, msg string) {
+      resp := map[string]string{"error": code, "message": msg}
+      if reqID := RequestIDFromContext(r.Context()); reqID != "" {
+          resp["request_id"] = reqID
+      }
+      writeJSON(w, status, resp)
+  }
+  ```
+  Error responses become:
+  ```json
+  {
+    "error": "INTERNAL_ERROR",
+    "message": "Failed to save finding",
+    "request_id": "req_01HXYZ..."
+  }
+  ```
+
+  **4. Success response integration — include in response header:**
+  - `X-Request-ID` response header is set by middleware for all responses.
+  - Optionally include `request_id` in error response bodies (not in success bodies — keep them clean, the header is sufficient).
+
+  **5. OTel trace context propagation (future):**
+  - When full distributed tracing is enabled (OTel SDK + exporter), the middleware also extracts/creates an OTel span from the `traceparent` header (W3C Trace Context).
+  - `logger.FromContext()` adds both `request_id` (our own) and `trace_id` (OTel) to log lines.
+  - This makes the request ID work standalone today, while being forward-compatible with full OTel tracing.
+
+- **Frontend changes (React UI):**
+  1. Extract `request_id` from error response bodies and display in error toasts/alerts.
+  2. Show a subtle "Request ID: xxx" in error states so users can copy and share with support.
+  3. Read `X-Request-ID` response header in the `request()` helper and attach to error objects.
+
+- **Middleware chain position:** RequestID middleware must be the **outermost** middleware — it runs before auth, tenant resolution, or any handler, so that even auth failures and 404s have a request ID.
+
+- **Dependencies on other roadmap items:**
+  - **Structured error codes:** `request_id` is added to the error response alongside `error` and `message`.
+  - **Standardized API response envelope:** `request_id` in error bodies, `X-Request-ID` header in all responses.
+  - **`writeError` signature change:** The function needs access to the request context (for the ID), so `writeError(w, status, code, msg)` becomes `writeError(w, r, status, code, msg)` — an additional breaking change across all call sites.
+
+- **Rules (to add to AGENTS.md after implementation):**
+  1. Every request handler MUST use `logger.FromContext(r.Context())` instead of bare `slog.Info/Error/Warn`. This ensures request IDs appear in all log lines.
+  2. The `RequestID` middleware must be the outermost in the chain — before auth, CORS, or any other middleware.
+  3. Never generate request IDs inside handlers — they come from middleware only.
+  4. Accept incoming `X-Request-ID` from reverse proxies (Nginx, Cloudflare, AWS ALB) to preserve upstream trace correlation.
+  5. Request IDs are included in error response bodies but NOT in success response bodies (use the `X-Request-ID` header for success responses).
 
 ---
 
@@ -528,3 +973,8 @@ Hardening features for session integrity, threat detection, and token lifecycle.
 | Rich session data (server-side UA parsing: browser, OS, device type) | 2026-06-11 |
 | Valkey cache layer (session revocation caching, graceful fallback) | 2026-06-11 |
 | Profile page redesign (4 tabs: Emails, Password, Auth, Sessions) | 2026-06-11 |
+| Token Management UI (Settings → API Tokens tab) | 2026-06-11 |
+| Projects page (`/projects` with create dialog) | 2026-06-11 |
+| Finding detail enhancements (CVE, CVSS, seen_count, last_seen_at) | 2026-06-11 |
+| Findings filters (verified status, project filter) | 2026-06-11 |
+| Base domain auth restriction (auth only on base domain, cookie domain scoping, subdomain redirect) | 2026-06-11 |

@@ -59,6 +59,7 @@ Migrations are versioned and tracked in `common.schema_migrations`.
 - **Middleware chain (users):** `Auth(jwt) → TenantResolver(subdomain/header + membership check) → Handler`
 - **Password hash** is tagged `json:"-"` on the User model — never exposed in API responses.
 - **Email enumeration** is prevented: login returns the same error for wrong email and wrong password.
+- **Base domain restriction:** When `AEGIS_BASE_DOMAIN` is set, all public auth endpoints (register, login, logout, forgot-password, reset-password, MFA validate, verify-email) are blocked on org subdomains via `baseOnlyMiddleware`. Auth flows must happen on the base domain only. Cookies are set with `Domain=.baseDomain` for cross-subdomain sharing. The UI redirects users from subdomain auth pages to the base domain with a `?return_to=` param.
 
 ### Agent Authentication
 
@@ -143,6 +144,13 @@ Each org tracks a `schema_version` in `common.organizations`. This allows:
 - **Context:** Use `middleware.UserFromContext(ctx)` and `middleware.OrgFromContext(ctx)` to access the authenticated user and current org.
 - **Tenant store:** Use `tenantStore(r)` helper in handlers (calls `middleware.TenantStoreFromContext`).
 - **Imports:** Group as stdlib → external → internal.
+- **Logging:** Use `log/slog` (Go stdlib). Never use `fmt.Printf`, `log.Printf`, or `log.Println` for application logging.
+  - `slog.Info("message", "key", value)` — normal operational events
+  - `slog.Warn("message", "key", value)` — degraded but recoverable situations
+  - `slog.Error("message", "error", err)` — failures that need attention
+  - `slog.Debug("message", "key", value)` — verbose tracing (only visible at debug level)
+  - Always include structured key-value pairs, not formatted strings
+  - For request-scoped logging, use `logger.FromContext(ctx)` (future OTel trace ID injection)
 
 ### React UI
 
@@ -214,10 +222,12 @@ ci: add Docker build verification to CI
 
 ### Route Tiers
 
-1. **Public** — no auth required: `/api/v1/auth/register`, `/api/v1/auth/login`, `/api/v1/auth/logout`
-2. **Authenticated** — JWT cookie required: `/api/v1/auth/me`, `/api/v1/orgs`, `/api/v1/config/features`
-3. **Protected** — JWT + org context (subdomain/X-Org-Slug + membership verified): findings, projects, members, tokens, dashboard
-4. **Agent** — Bearer token (org resolved from subdomain/header, no membership check): `/api/v1/agent/*`
+1. **Infrastructure (any domain, no auth)** — registered on the top-level mux outside the API server, bypasses all middleware. Accessible on base domain, org subdomains, custom domains, IPs — anywhere. Used by load balancers, Kubernetes probes, and monitoring systems: `/healthz`, `/readyz`, `/metrics`
+2. **Public (base domain only)** — no auth required, but blocked on org subdomains when `AEGIS_BASE_DOMAIN` is set: `/api/v1/auth/register`, `/api/v1/auth/login`, `/api/v1/auth/logout`, `/api/v1/auth/forgot-password`, `/api/v1/auth/reset-password`, `/api/v1/auth/mfa/validate`, `/api/v1/auth/verify-email`
+3. **Public (any domain)** — no auth, works everywhere: `/api/v1/config/auth`, `/api/v1/docs`, `/api/v1/docs/openapi.yaml`
+4. **Authenticated** — JWT cookie required: `/api/v1/auth/me`, `/api/v1/orgs`, `/api/v1/config/features`
+5. **Protected** — JWT + org context (subdomain/X-Org-Slug + membership verified): findings, projects, members, tokens, dashboard
+6. **Agent** — Bearer token (org resolved from subdomain/header, no membership check): `/api/v1/agent/*`
 
 ### Request/Response
 
@@ -334,6 +344,15 @@ Transactional emails (password reset, MFA codes, etc.) are sent via SMTP. Config
 **Development:** MailDev runs automatically via Docker Compose. View sent emails at `http://localhost:1080`.
 
 **Production:** Set real SMTP credentials (SendGrid, AWS SES, Mailgun, etc.) in `.env`.
+
+### Logging
+
+| Variable | Default | Description |
+|---|---|---|
+| `LOG_LEVEL` | `info` | Minimum log level: `debug`, `info`, `warn`, `error` |
+| `LOG_FORMAT` | `text` | Output format: `text` (human-readable) or `json` (structured for log aggregation) |
+
+Uses Go's stdlib `log/slog`. JSON format is recommended for production with log aggregation (ELK, Loki, CloudWatch, etc.).
 
 ---
 

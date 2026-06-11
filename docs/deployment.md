@@ -28,9 +28,16 @@ POSTGRES_DB=aegis
 AEGIS_PORT=8080
 AEGIS_ALLOWED_ORIGINS=https://your-domain.com
 
-# Subdomain-based org resolution (optional)
-# Set this to enable acme.aegis.io style org URLs
-# AEGIS_BASE_DOMAIN=aegis.io
+# Subdomain-based org resolution
+# Development: lvh.me (*.lvh.me resolves to 127.0.0.1)
+# Production: your-domain.com (configure wildcard DNS: *.your-domain.com)
+AEGIS_BASE_DOMAIN=lvh.me      # dev
+# AEGIS_BASE_DOMAIN=aegis.io  # production
+
+# Logging (default: info level, text format)
+# Use json format for production log aggregation (ELK, Loki, etc.)
+LOG_LEVEL=info
+LOG_FORMAT=text
 ```
 
 Generate a strong JWT secret:

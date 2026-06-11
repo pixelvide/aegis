@@ -99,8 +99,10 @@ This is validated by regex `^org_[a-f0-9]{32}$` to prevent SQL injection.
    │  └─ Inject user into context
    │
 5. Tenant Middleware (for org-scoped routes):
-   │  ├─ Read subdomain from Host header (production)
-   │  ├─ Or read X-Org-ID / X-Org-Slug header (dev)
+   │  ├─ Try subdomain from Host header (production, if AEGIS_BASE_DOMAIN set)
+   │  ├─ Try custom domain lookup (if host ≠ base domain)
+   │  ├─ Reject if X-Org-* header conflicts with subdomain (400)
+   │  ├─ Fallback: X-Org-ID / X-Org-Slug header (dev mode)
    │  ├─ Load org from DB
    │  ├─ Verify user is a member of the org
    │  ├─ Create schema-scoped Store
@@ -130,9 +132,32 @@ This is validated by regex `^org_[a-f0-9]{32}$` to prevent SQL injection.
 
 ## Auth Flow
 
+### Base Domain Restriction
+
+When `AEGIS_BASE_DOMAIN` is set (e.g., `aegis.io`), all auth flows are restricted to the base domain only. Requests to org subdomains (e.g., `acme.aegis.io/api/v1/auth/login`) are rejected with a 403 error.
+
+This applies to: register, login, logout, forgot-password, reset-password, MFA validate, MFA send-email-otp, and verify-email endpoints.
+
+**Defense in depth:**
+- **Server-side:** `baseOnlyMiddleware` rejects auth API calls from any host that isn't the exact base domain (subdomains, IPs, unknown hostnames are all blocked)
+- **UI-side:** `useSubdomainAuthRedirect` hook redirects auth pages to the base domain
+- **Cookie scoping:** Auth cookies are set with `Domain=.aegis.io` so they work across all subdomains
+
+**Login redirect flow:**
+```
+User visits acme.aegis.io (no session)
+  → UI redirects to aegis.io/login?return_to=https://acme.aegis.io/
+  → User logs in on aegis.io (cookie set with Domain=.aegis.io)
+  → UI redirects back to acme.aegis.io/ (cookie is valid on subdomain)
+```
+
+The `return_to` parameter is validated to prevent open redirect attacks — only URLs sharing the same base domain are allowed.
+
+**Exceptions:** `GET /api/v1/auth/me` works on any subdomain (it's authenticated, not public, and the UI needs it to check session status).
+
 ### Registration
 ```
-POST /api/v1/auth/register
+POST /api/v1/auth/register  (base domain only when AEGIS_BASE_DOMAIN set)
   │
   ├─ Check feature flag: signup enabled?
   ├─ Validate email, password (8+ chars, upper+lower+digit), name
@@ -142,22 +167,23 @@ POST /api/v1/auth/register
   ├─ Create default org ("Name's Org")
   ├─ Add user as org owner
   ├─ Generate JWT (24h TTL)
-  └─ Set aegis_token HttpOnly cookie
+  └─ Set aegis_token HttpOnly cookie (Domain=.baseDomain when set)
 ```
 
 ### Login
 ```
-POST /api/v1/auth/login
+POST /api/v1/auth/login  (base domain only when AEGIS_BASE_DOMAIN set)
   │
   ├─ Find user by email
   ├─ Compare bcrypt hash (same error for wrong email/password)
+  ├─ If MFA enabled: return mfa_required + short-lived MFA token
   ├─ Generate JWT
-  └─ Set aegis_token HttpOnly cookie
+  └─ Set aegis_token HttpOnly cookie (Domain=.baseDomain when set)
 ```
 
 ### Session Check
 ```
-GET /api/v1/auth/me
+GET /api/v1/auth/me  (works on any subdomain)
   │
   ├─ Auth middleware validates cookie
   ├─ Load user + their orgs
@@ -190,5 +216,7 @@ Each org's data is fully isolated at the database level:
 | Auth (Users) | bcrypt (cost 12), JWT (HS256, golang-jwt/v5) |
 | Auth (Agents) | Bearer tokens, bcrypt-hashed, per-org schema |
 | Org Resolution | Subdomain (`acme.aegis.io`) or `X-Org-Slug` header |
+| Logging | `log/slog` (Go stdlib), configurable level/format via `LOG_LEVEL`/`LOG_FORMAT` |
+| Observability | OpenTelemetry metrics, Prometheus exporter (`/metrics`) |
 | Deployment | Docker, Docker Compose |
 | UI Embedding | Go `embed` package (SPA served from binary) |

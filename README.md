@@ -47,6 +47,43 @@ npm run dev
 # Open http://localhost:5173
 ```
 
+### Subdomain Testing (local)
+
+Aegis supports subdomain-based org resolution (e.g., `acme.aegis.io`). To test this locally, we use [`lvh.me`](http://lvh.me) — a public domain where `*.lvh.me` resolves to `127.0.0.1`. No `/etc/hosts` changes needed.
+
+**Setup:**
+
+```bash
+# .env (already set by default in .env.example)
+AEGIS_BASE_DOMAIN=lvh.me
+
+# Restart
+docker compose up --build -d
+```
+
+**Usage:**
+
+| URL | What happens |
+|---|---|
+| `http://lvh.me:8080` | Base domain — no subdomain, header-only mode |
+| `http://test.lvh.me:8080` | Resolves org with slug `test` from subdomain |
+| `http://acme.lvh.me:8080` | Resolves org with slug `acme` from subdomain |
+| Any new org slug | Works instantly — `*.lvh.me` is a wildcard |
+
+**Testing the mismatch guard:**
+
+```bash
+# This works — subdomain matches
+curl -b cookies.txt http://test.lvh.me:8080/api/v1/findings
+
+# This is REJECTED (400) — subdomain says "test" but header says "acme"
+curl -b cookies.txt http://test.lvh.me:8080/api/v1/findings \
+  -H "X-Org-Slug: acme"
+# → {"error":"X-Org-Slug header conflicts with subdomain"}
+```
+
+> **Production:** Set `AEGIS_BASE_DOMAIN=aegis.io` (or your domain). Configure DNS with a wildcard `*.aegis.io → your-server-ip`.
+
 ---
 
 ## Architecture
@@ -120,6 +157,15 @@ aegis/
 │       │   └── dashboard.go    # Dashboard stats
 │       ├── auth/               # JWT + bcrypt service
 │       ├── config/             # Env-based configuration
+│       ├── email/
+│       │   ├── email.go        # SMTP transport service
+│       │   └── templates/      # HTML email templates
+│       │       ├── layout.go           # Shared base layout + helpers
+│       │       ├── login_alert.go      # New sign-in notification
+│       │       ├── password_reset.go   # Reset link email
+│       │       ├── password_changed.go # Change confirmation
+│       │       ├── verify_email.go     # Email verification link
+│       │       └── mfa_code.go         # MFA OTP code
 │       ├── middleware/
 │       │   ├── auth.go         # JWT cookie validation
 │       │   ├── tenant.go       # Org resolution + membership check
@@ -153,7 +199,7 @@ aegis/
 │       └── components/
 │           ├── app-sidebar.tsx  # Left nav + user menu
 │           ├── top-nav.tsx      # Breadcrumb header
-│           ├── org-project-switcher.tsx
+│           ├── org-switcher.tsx
 │           ├── metric-card.tsx  # Dashboard stat cards
 │           ├── severity-badge.tsx
 │           └── ui/             # shadcn/ui primitives
@@ -198,7 +244,7 @@ All configuration is via environment variables:
 | Method | Endpoint | Description |
 |---|---|---|
 | POST | `/api/v1/orgs` | Create org (creator = owner) |
-| GET | `/api/v1/orgs` | List user's orgs |
+| GET | `/api/v1/orgs` | List user's orgs + `base_domain` config |
 | GET | `/api/v1/orgs/{slug}` | Get org by slug |
 
 ### Feature Flags (authenticated)

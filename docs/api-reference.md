@@ -617,6 +617,21 @@ Current flags: `signup`, `invite_only`, `scan_docker_mode`, `public_api`
 
 ---
 
+### GET `/config/auth`
+
+Returns auth configuration. **Public endpoint** — no authentication required. Used by the UI to detect subdomain mode before the user has a session.
+
+**Response (200):**
+```json
+{
+  "base_domain": "aegis.io"
+}
+```
+
+When `AEGIS_BASE_DOMAIN` is not set, `base_domain` is an empty string.
+
+---
+
 ## Scans 🔒🏢 (Read-Only)
 
 Requires org context (`X-Org-ID` or `X-Org-Slug` header).
