@@ -69,16 +69,59 @@ Migrations are versioned and tracked in `common.schema_migrations`.
 - **Middleware chain (agents):** `TokenAuth(bearer + subdomain/header → org → prefix lookup → bcrypt verify) → Handler`
 - **Context:** Use `middleware.AgentTokenFromContext(ctx)` to get the authenticated token.
 
-### Feature Flags
+### Feature Flags (IMPORTANT)
 
-Feature flags live in `common.feature_flags`. Check them via:
+Aegis uses a **two-tier feature flag system**:
+
+1. **Global flags** — `common.feature_flags`. Platform-wide kill-switches controlled by operators.
+2. **Org-level flags** — `org_<uuid>.org_feature_flags`. Per-org overrides controlled by org admins (admin+ role).
+
+A feature is enabled for an org only if **both** the global flag AND the org-level flag are enabled (logical AND). This means:
+- If the global flag is disabled, the feature is off for **all** orgs regardless of their org-level setting.
+- If the global flag is enabled but the org flag is disabled, the feature is off for **that org only**.
+
+**Check global flags via:**
 ```go
 if !s.common.IsFeatureEnabled(ctx, "signup") {
-    // feature is disabled
+    // feature is globally disabled
 }
 ```
 
-Current flags: `signup`, `invite_only`, `scan_docker_mode`, `public_api`.
+**Check org-level flags via:**
+```go
+if !tenantStore.IsOrgFeatureEnabled(ctx, "require_mfa") {
+    // feature is disabled for this org
+}
+```
+
+**Combined check (preferred pattern for feature-gated behavior):**
+```go
+if !s.common.IsFeatureEnabled(ctx, "mfa") || !tenantStore.IsOrgFeatureEnabled(ctx, "require_mfa") {
+    // MFA is not active for this org
+}
+```
+
+**Current global flags:** `signup`, `invite_only`, `scan_docker_mode`, `public_api`.
+
+**Example org-level flags:** `require_mfa`, `ip_restrictions`, `email_domain_restriction`, `auto_join`, `api_access`, `scan_docker_mode`, `advanced_reports`, `webhooks`, `sso`, `custom_domain`.
+
+**Rules:**
+1. **All user-visible features that can be toggled MUST use org-level feature flags.** Do not use hardcoded booleans, environment variables, or config files for feature toggling. If a feature should be controllable per-org, it goes in `org_feature_flags`. If it's a platform-wide concern, it goes in `common.feature_flags`.
+2. **New features default to disabled** in org-level flags. Seed sensible defaults in `ProvisionOrgSchema()` based on the org's plan.
+3. **Feature flags control visibility, not authorization.** RBAC determines _who_ can do something; feature flags determine _whether_ the feature exists at all for that org.
+4. **Never check feature flags in the UI by calling the API repeatedly.** Fetch all org flags once on page load via `GET /api/v1/org-features` and cache them in the org context.
+
+### Org Versioning
+
+Each org tracks a `schema_version` in `common.organizations`. This allows:
+- **Independent upgrades:** Org A can be on schema v1 while Org B is on v2.
+- **Graduated rollout:** Migrate enterprise orgs first, then pro, then free.
+- **Feature-version coupling:** Org feature flags can have a `min_version` field — the feature is auto-disabled if the org hasn't been upgraded to the required schema version.
+
+**Rules:**
+1. When adding a new org-scoped table or column, update both `ProvisionOrgSchema()` (for new orgs) and add a per-org migration (for existing orgs).
+2. Per-org migrations run via the `org_schema_migrations` table inside each org schema, not the global `common.schema_migrations`.
+3. Never assume all orgs are on the same schema version. Always check `schema_version` before using version-dependent features.
 
 ---
 
@@ -92,6 +135,7 @@ Current flags: `signup`, `invite_only`, `scan_docker_mode`, `public_api`.
   - `api/` — HTTP handlers, one file per domain (auth.go, agent.go, findings.go, etc.)
   - `auth/` — password hashing + JWT generation/validation
   - `config/` — environment-based configuration
+  - `email/` — SMTP-based transactional email sending
   - `middleware/` — auth, tenant resolution, and token auth
   - `models/` — domain types (shared between API and store)
   - `store/` — data access (Store interface + PostgreSQL implementation)
@@ -110,6 +154,29 @@ Current flags: `signup`, `invite_only`, `scan_docker_mode`, `public_api`.
 - **Org state:** Use `useOrg()` hook from `lib/org-context.tsx`.
 - **Pages:** One file per page in `pages/`. Keep pages focused on data fetching + layout.
 - **Design:** Google Cloud Console inspired — left sidebar, flat card style, clean edges, no rounded corners on cards.
+
+### Linting
+
+Lint checks run automatically via a pre-commit hook (`.git/hooks/pre-commit`). You can also run them manually:
+
+**Go server** — uses `go vet` (built-in) and optionally `golangci-lint`:
+```bash
+cd server && go vet ./...
+# If golangci-lint is installed:
+cd server && golangci-lint run ./...
+```
+
+**React UI** — uses ESLint (configured in `ui/eslint.config.js`):
+```bash
+cd ui && pnpm run lint
+```
+
+**Pre-commit hook:** The hook at `.git/hooks/pre-commit` runs linters only for the language with staged files. It:
+- Runs `go vet ./...` (and `golangci-lint` if installed) for staged `.go` files
+- Runs `pnpm exec eslint --max-warnings 0 .` for staged `.ts`/`.tsx` files
+- Fails the commit if any linter reports errors
+
+To install the hook after a fresh clone, copy it from the repo (or it's auto-created by the dev setup).
 
 ### Git Conventions
 
@@ -177,6 +244,55 @@ Org slugs are validated against a blacklist of reserved names (`admin`, `api`, `
 
 ---
 
+## Development Environment (IMPORTANT)
+
+### Docker-First Philosophy
+
+**Always prefer Docker** for running services and building the project. If Docker and Docker Compose are available on the machine, use them for everything possible — database, SMTP, builds, and the app itself.
+
+**Decision flow:**
+1. **Check if Docker is installed:** Run `docker --version` and `docker compose version`.
+2. **If Docker is available:** Use `docker compose up --build -d` to start everything. No other prerequisites needed.
+3. **If Docker is NOT available:** Fall back to local installation (see Prerequisites below). **Ask the USER** before installing anything — do not silently install tools.
+
+### Prerequisites (Local Development — No Docker)
+
+If Docker is unavailable, the following must be installed locally. **Before proceeding, ask the USER to install any missing tools** or get their permission to install them.
+
+| Tool | Minimum Version | Purpose | Install Check |
+|---|---|---|---|
+| Go | 1.25+ | Server compilation | `go version` |
+| Node.js | 24+ | UI build & dev server | `node --version` |
+| pnpm | 9+ | UI dependency management | `pnpm --version` |
+| PostgreSQL | 16+ | Database | `psql --version` |
+| Git | 2.0+ | Version control | `git --version` |
+
+**Rules:**
+1. **Never assume tools are installed.** Always check first with the version commands above.
+2. **If a prerequisite is missing**, inform the USER which tool is needed and why, then ask them to install it. Do not attempt to install system packages (e.g., via `apt`, `brew`, `yum`) without explicit USER approval.
+3. **For pnpm dependencies**, run `cd ui && pnpm install` only after confirming Node.js and pnpm are available.
+4. **For Go modules**, run `cd server && go mod download` only after confirming Go is available.
+
+### Running Locally (Without Docker)
+
+If running without Docker, the USER needs to manually set up:
+
+1. **PostgreSQL** — Running locally or remotely, with a database created:
+   ```bash
+   createdb aegis
+   ```
+2. **Environment variables** — Copy `.env.example` to `.env` and configure `DATABASE_URL`, `JWT_SECRET`, etc.
+3. **Server:**
+   ```bash
+   cd server && go run ./cmd/server
+   ```
+4. **UI (dev mode):**
+   ```bash
+   cd ui && pnpm install && pnpm run dev
+   ```
+
+---
+
 ## Docker
 
 ### Production Build
@@ -186,7 +302,7 @@ docker compose up --build -d
 ```
 
 The `server/Dockerfile` is a 3-stage build:
-1. **node:20-alpine** — builds the React UI (`npm run build`)
+1. **node:24-alpine** — builds the React UI (`pnpm run build`)
 2. **golang:1.25-alpine** — compiles the Go server with the UI embedded
 3. **alpine:3.20** — minimal runtime (~15MB)
 
@@ -195,9 +311,29 @@ The `server/Dockerfile` is a 3-stage build:
 | Service | Internal | External (default) |
 |---|---|---|
 | PostgreSQL | 5432 | 5432 |
+| Valkey | 6379 | 6379 |
 | Aegis Server | 8080 | 8080 |
+| MailDev SMTP | 1025 | 1025 |
+| MailDev Web UI | 1080 | 1080 |
 
 In production, the Go server serves both the API (`/api/*`) and the SPA UI (`/`) on port 8080.
+
+### SMTP / Email
+
+Transactional emails (password reset, MFA codes, etc.) are sent via SMTP. Configuration is environment-based:
+
+| Variable | Default | Description |
+|---|---|---|
+| `SMTP_HOST` | `localhost` | SMTP server hostname |
+| `SMTP_PORT` | `1025` | SMTP server port |
+| `SMTP_USERNAME` | *(empty)* | Auth username (empty = no auth) |
+| `SMTP_PASSWORD` | *(empty)* | Auth password |
+| `SMTP_FROM` | `noreply@aegis.local` | Sender address |
+| `SMTP_TLS` | `false` | Enable STARTTLS (`true` for production) |
+
+**Development:** MailDev runs automatically via Docker Compose. View sent emails at `http://localhost:1080`.
+
+**Production:** Set real SMTP credentials (SendGrid, AWS SES, Mailgun, etc.) in `.env`.
 
 ---
 

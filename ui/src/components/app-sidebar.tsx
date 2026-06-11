@@ -1,4 +1,4 @@
-import { NavLink, useLocation } from "react-router-dom"
+import { NavLink, useLocation, useNavigate } from "react-router-dom"
 import {
   LayoutDashboard,
   Search,
@@ -69,6 +69,7 @@ function userInitials(name: string): string {
 
 export function AppSidebar() {
   const location = useLocation()
+  const navigate = useNavigate()
   const { isMobile } = useSidebar()
   const { user, logout } = useAuth()
 
@@ -227,7 +228,7 @@ export function AppSidebar() {
                 <DropdownMenuSeparator />
 
                 <DropdownMenuGroup>
-                  <DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => navigate("/profile")}>
                     <User className="mr-2 h-4 w-4" />
                     Account
                   </DropdownMenuItem>
@@ -257,3 +258,4 @@ export function AppSidebar() {
     </Sidebar>
   )
 }
+

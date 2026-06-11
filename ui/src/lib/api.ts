@@ -25,7 +25,7 @@ export function getCurrentOrg(): { slug: string | null; id: string | null } {
 
 // ─── Request Helper ─────────────────────────────────────────────────────────
 
-async function request<T>(path: string, options?: RequestInit): Promise<T> {
+export async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
   }
@@ -44,6 +44,15 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
   })
 
   if (!res.ok) {
+    // Auto-logout on 401 (expired/invalid JWT) — skip auth endpoints to avoid redirect loops
+    const isAuthEndpoint = path.startsWith("/auth/")
+    if (res.status === 401 && !isAuthEndpoint) {
+      // Clear cookie and redirect to login
+      await fetch(`${BASE}/auth/logout`, { method: "POST", credentials: "include" }).catch(() => {})
+      window.location.href = "/login"
+      throw new Error("Session expired")
+    }
+
     const body = await res.json().catch(() => ({ error: res.statusText }))
     throw new Error(body.error || `Request failed: ${res.status}`)
   }

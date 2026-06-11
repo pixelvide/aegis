@@ -150,6 +150,149 @@ var migrations = []migration{
 		END $$;
 		`,
 	},
+	{
+		Version:     7,
+		Description: "Password reset tokens, MFA user columns, and recovery codes",
+		SQL: `
+		-- Password reset tokens
+		CREATE TABLE IF NOT EXISTS common.password_reset_tokens (
+			id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+			user_id     UUID NOT NULL REFERENCES common.users(id) ON DELETE CASCADE,
+			token_hash  TEXT NOT NULL,
+			expires_at  TIMESTAMPTZ NOT NULL,
+			used_at     TIMESTAMPTZ,
+			created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		);
+		CREATE INDEX IF NOT EXISTS idx_reset_tokens_user ON common.password_reset_tokens(user_id);
+
+		-- MFA fields on users
+		ALTER TABLE common.users ADD COLUMN IF NOT EXISTS mfa_enabled BOOLEAN NOT NULL DEFAULT FALSE;
+		ALTER TABLE common.users ADD COLUMN IF NOT EXISTS mfa_secret TEXT NOT NULL DEFAULT '';
+		ALTER TABLE common.users ADD COLUMN IF NOT EXISTS mfa_verified_at TIMESTAMPTZ;
+
+		-- MFA recovery codes (hashed)
+		CREATE TABLE IF NOT EXISTS common.mfa_recovery_codes (
+			id        UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+			user_id   UUID NOT NULL REFERENCES common.users(id) ON DELETE CASCADE,
+			code_hash TEXT NOT NULL,
+			used_at   TIMESTAMPTZ
+		);
+		CREATE INDEX IF NOT EXISTS idx_mfa_recovery_user ON common.mfa_recovery_codes(user_id);
+		`,
+	},
+	{
+		Version:     8,
+		Description: "Email verification",
+		SQL: `
+		ALTER TABLE common.users ADD COLUMN IF NOT EXISTS email_verified BOOLEAN NOT NULL DEFAULT FALSE;
+		ALTER TABLE common.users ADD COLUMN IF NOT EXISTS email_verified_at TIMESTAMPTZ;
+
+		CREATE TABLE IF NOT EXISTS common.email_verification_tokens (
+			id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+			user_id    UUID NOT NULL REFERENCES common.users(id) ON DELETE CASCADE,
+			token_hash TEXT NOT NULL,
+			expires_at TIMESTAMPTZ NOT NULL,
+			used_at    TIMESTAMPTZ,
+			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		);
+		CREATE INDEX IF NOT EXISTS idx_email_verify_user ON common.email_verification_tokens(user_id);
+		`,
+	},
+	{
+		Version:     9,
+		Description: "Multi-email, multi-device MFA, email OTP, user sessions",
+		SQL: `
+		-- Drop unreleased MFA/email columns from users
+		ALTER TABLE common.users DROP COLUMN IF EXISTS mfa_secret;
+		ALTER TABLE common.users DROP COLUMN IF EXISTS mfa_verified_at;
+		ALTER TABLE common.users DROP COLUMN IF EXISTS email_verified;
+		ALTER TABLE common.users DROP COLUMN IF EXISTS email_verified_at;
+
+		-- Drop unreleased tables
+		DROP TABLE IF EXISTS common.mfa_recovery_codes;
+		DROP TABLE IF EXISTS common.email_verification_tokens;
+
+		-- 1. Multiple emails per user
+		CREATE TABLE common.user_emails (
+			id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+			user_id     UUID NOT NULL REFERENCES common.users(id) ON DELETE CASCADE,
+			email       TEXT NOT NULL UNIQUE,
+			is_primary  BOOLEAN NOT NULL DEFAULT FALSE,
+			verified    BOOLEAN NOT NULL DEFAULT FALSE,
+			verified_at TIMESTAMPTZ,
+			created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		);
+		CREATE INDEX idx_user_emails_user ON common.user_emails(user_id);
+
+		-- Seed existing primary emails
+		INSERT INTO common.user_emails (user_id, email, is_primary, verified)
+		SELECT id, email, TRUE, FALSE FROM common.users
+		ON CONFLICT (email) DO NOTHING;
+
+		-- 2. MFA devices (TOTP + email OTP)
+		CREATE TABLE common.mfa_devices (
+			id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+			user_id      UUID NOT NULL REFERENCES common.users(id) ON DELETE CASCADE,
+			name         TEXT NOT NULL DEFAULT '',
+			type         TEXT NOT NULL,
+			secret       TEXT NOT NULL DEFAULT '',
+			email        TEXT NOT NULL DEFAULT '',
+			verified     BOOLEAN NOT NULL DEFAULT FALSE,
+			verified_at  TIMESTAMPTZ,
+			last_used_at TIMESTAMPTZ,
+			created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		);
+		CREATE INDEX idx_mfa_devices_user ON common.mfa_devices(user_id);
+
+		-- 3. MFA recovery codes (8 one-time codes, bcrypt hashed)
+		CREATE TABLE common.mfa_recovery_codes (
+			id        UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+			user_id   UUID NOT NULL REFERENCES common.users(id) ON DELETE CASCADE,
+			code_hash TEXT NOT NULL,
+			used_at   TIMESTAMPTZ
+		);
+		CREATE INDEX idx_mfa_recovery_user ON common.mfa_recovery_codes(user_id);
+
+		-- 4. Email OTP codes (for email-based MFA)
+		CREATE TABLE common.email_otp_codes (
+			id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+			user_id    UUID NOT NULL REFERENCES common.users(id) ON DELETE CASCADE,
+			device_id  UUID NOT NULL REFERENCES common.mfa_devices(id) ON DELETE CASCADE,
+			code_hash  TEXT NOT NULL,
+			expires_at TIMESTAMPTZ NOT NULL,
+			used_at    TIMESTAMPTZ,
+			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		);
+		CREATE INDEX idx_email_otp_user ON common.email_otp_codes(user_id);
+
+		-- 5. User sessions
+		CREATE TABLE common.user_sessions (
+			id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+			user_id        UUID NOT NULL REFERENCES common.users(id) ON DELETE CASCADE,
+			jti            TEXT NOT NULL UNIQUE,
+			ip_address     TEXT NOT NULL DEFAULT '',
+			user_agent     TEXT NOT NULL DEFAULT '',
+			browser        TEXT NOT NULL DEFAULT '',
+			os             TEXT NOT NULL DEFAULT '',
+			device_type    TEXT NOT NULL DEFAULT 'desktop',
+			created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			last_active_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			expires_at     TIMESTAMPTZ NOT NULL,
+			revoked_at     TIMESTAMPTZ
+		);
+		CREATE INDEX idx_sessions_user ON common.user_sessions(user_id);
+		CREATE INDEX idx_sessions_jti ON common.user_sessions(jti);
+		`,
+	},
+	{
+		Version:     10,
+		Description: "Add browser, os, device_type columns to user_sessions",
+		SQL: `
+		ALTER TABLE common.user_sessions ADD COLUMN IF NOT EXISTS browser TEXT NOT NULL DEFAULT '';
+		ALTER TABLE common.user_sessions ADD COLUMN IF NOT EXISTS os TEXT NOT NULL DEFAULT '';
+		ALTER TABLE common.user_sessions ADD COLUMN IF NOT EXISTS device_type TEXT NOT NULL DEFAULT 'desktop';
+		`,
+	},
 }
 
 func (cs *CommonStore) migrate() error {
@@ -309,24 +452,43 @@ func (cs *CommonStore) CreateUser(ctx context.Context, user *models.User) error 
 
 // GetUser returns a user by ID.
 func (cs *CommonStore) GetUser(ctx context.Context, id string) (*models.User, error) {
-	const q = `SELECT id, email, name, avatar_url, password_hash, created_at FROM common.users WHERE id = $1`
+	const q = `SELECT id, email, name, avatar_url, password_hash, mfa_enabled, created_at FROM common.users WHERE id = $1`
 	user := &models.User{}
-	err := cs.db.QueryRowContext(ctx, q, id).Scan(&user.ID, &user.Email, &user.Name, &user.AvatarURL, &user.PasswordHash, &user.CreatedAt)
+	err := cs.db.QueryRowContext(ctx, q, id).Scan(&user.ID, &user.Email, &user.Name, &user.AvatarURL, &user.PasswordHash, &user.MFAEnabled, &user.CreatedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
-	return user, err
+	if err != nil {
+		return nil, err
+	}
+	cs.hydrateEmailVerified(ctx, user)
+	return user, nil
 }
 
 // GetUserByEmail returns a user by email (includes password hash for auth).
 func (cs *CommonStore) GetUserByEmail(ctx context.Context, email string) (*models.User, error) {
-	const q = `SELECT id, email, name, avatar_url, password_hash, created_at FROM common.users WHERE email = $1`
+	const q = `SELECT id, email, name, avatar_url, password_hash, mfa_enabled, created_at FROM common.users WHERE email = $1`
 	user := &models.User{}
-	err := cs.db.QueryRowContext(ctx, q, email).Scan(&user.ID, &user.Email, &user.Name, &user.AvatarURL, &user.PasswordHash, &user.CreatedAt)
+	err := cs.db.QueryRowContext(ctx, q, email).Scan(&user.ID, &user.Email, &user.Name, &user.AvatarURL, &user.PasswordHash, &user.MFAEnabled, &user.CreatedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
-	return user, err
+	if err != nil {
+		return nil, err
+	}
+	cs.hydrateEmailVerified(ctx, user)
+	return user, nil
+}
+
+// hydrateEmailVerified sets the computed EmailVerified field from user_emails.
+func (cs *CommonStore) hydrateEmailVerified(ctx context.Context, user *models.User) {
+	var verified bool
+	err := cs.db.QueryRowContext(ctx,
+		`SELECT verified FROM common.user_emails WHERE user_id = $1 AND is_primary = true LIMIT 1`,
+		user.ID).Scan(&verified)
+	if err == nil {
+		user.EmailVerified = verified
+	}
 }
 
 // ─── Memberships ────────────────────────────────────────────────────────────
@@ -663,3 +825,514 @@ func (cs *CommonStore) GetOrgByDomain(ctx context.Context, domain string) (*mode
 	}
 	return org, err
 }
+
+// ─── Password Reset ─────────────────────────────────────────────────────────
+
+// PasswordResetToken represents a stored password reset token.
+type PasswordResetToken struct {
+	ID        string
+	UserID    string
+	TokenHash string
+	ExpiresAt time.Time
+	UsedAt    *time.Time
+	CreatedAt time.Time
+}
+
+// CreatePasswordResetToken inserts a new password reset token.
+func (cs *CommonStore) CreatePasswordResetToken(ctx context.Context, userID, tokenHash string, expiresAt time.Time) error {
+	const q = `INSERT INTO common.password_reset_tokens (user_id, token_hash, expires_at)
+		VALUES ($1, $2, $3)`
+	_, err := cs.db.ExecContext(ctx, q, userID, tokenHash, expiresAt)
+	return err
+}
+
+// GetPasswordResetToken returns a token by hash that hasn't been used and hasn't expired.
+func (cs *CommonStore) GetPasswordResetToken(ctx context.Context, tokenHash string) (*PasswordResetToken, error) {
+	const q = `SELECT id, user_id, token_hash, expires_at, used_at, created_at
+		FROM common.password_reset_tokens
+		WHERE token_hash = $1 AND used_at IS NULL AND expires_at > NOW()`
+	t := &PasswordResetToken{}
+	err := cs.db.QueryRowContext(ctx, q, tokenHash).Scan(
+		&t.ID, &t.UserID, &t.TokenHash, &t.ExpiresAt, &t.UsedAt, &t.CreatedAt,
+	)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	return t, err
+}
+
+// MarkResetTokenUsed marks a reset token as used.
+func (cs *CommonStore) MarkResetTokenUsed(ctx context.Context, id string) error {
+	_, err := cs.db.ExecContext(ctx, "UPDATE common.password_reset_tokens SET used_at = NOW() WHERE id = $1", id)
+	return err
+}
+
+// InvalidateResetTokens marks all unused tokens for a user as used.
+func (cs *CommonStore) InvalidateResetTokens(ctx context.Context, userID string) error {
+	_, err := cs.db.ExecContext(ctx,
+		"UPDATE common.password_reset_tokens SET used_at = NOW() WHERE user_id = $1 AND used_at IS NULL",
+		userID)
+	return err
+}
+
+// UpdateUserPassword updates a user's password hash.
+func (cs *CommonStore) UpdateUserPassword(ctx context.Context, userID, newHash string) error {
+	_, err := cs.db.ExecContext(ctx, "UPDATE common.users SET password_hash = $1 WHERE id = $2", newHash, userID)
+	return err
+}
+
+// ─── User Emails ────────────────────────────────────────────────────────────
+
+// ListUserEmails returns all email addresses for a user.
+func (cs *CommonStore) ListUserEmails(ctx context.Context, userID string) ([]models.UserEmail, error) {
+	const q = `SELECT id, user_id, email, is_primary, verified, verified_at, created_at
+		FROM common.user_emails WHERE user_id = $1 ORDER BY is_primary DESC, created_at ASC`
+	rows, err := cs.db.QueryContext(ctx, q, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var emails []models.UserEmail
+	for rows.Next() {
+		var e models.UserEmail
+		if err := rows.Scan(&e.ID, &e.UserID, &e.Email, &e.IsPrimary, &e.Verified, &e.VerifiedAt, &e.CreatedAt); err != nil {
+			return nil, err
+		}
+		emails = append(emails, e)
+	}
+	return emails, rows.Err()
+}
+
+// AddUserEmail adds a new (unverified) email address for a user.
+func (cs *CommonStore) AddUserEmail(ctx context.Context, userID, email string) (*models.UserEmail, error) {
+	e := &models.UserEmail{}
+	const q = `INSERT INTO common.user_emails (user_id, email) VALUES ($1, $2)
+		RETURNING id, user_id, email, is_primary, verified, verified_at, created_at`
+	err := cs.db.QueryRowContext(ctx, q, userID, email).Scan(
+		&e.ID, &e.UserID, &e.Email, &e.IsPrimary, &e.Verified, &e.VerifiedAt, &e.CreatedAt)
+	if err != nil {
+		return nil, err
+	}
+	return e, nil
+}
+
+// AddPrimaryUserEmail adds a primary email for a user (used during registration).
+func (cs *CommonStore) AddPrimaryUserEmail(ctx context.Context, userID, email string) (*models.UserEmail, error) {
+	e := &models.UserEmail{}
+	const q = `INSERT INTO common.user_emails (user_id, email, is_primary) VALUES ($1, $2, TRUE)
+		RETURNING id, user_id, email, is_primary, verified, verified_at, created_at`
+	err := cs.db.QueryRowContext(ctx, q, userID, email).Scan(
+		&e.ID, &e.UserID, &e.Email, &e.IsPrimary, &e.Verified, &e.VerifiedAt, &e.CreatedAt)
+	if err != nil {
+		return nil, err
+	}
+	return e, nil
+}
+
+// RemoveUserEmail deletes a non-primary email.
+func (cs *CommonStore) RemoveUserEmail(ctx context.Context, emailID, userID string) error {
+	result, err := cs.db.ExecContext(ctx,
+		"DELETE FROM common.user_emails WHERE id = $1 AND user_id = $2 AND is_primary = FALSE",
+		emailID, userID)
+	if err != nil {
+		return err
+	}
+	n, _ := result.RowsAffected()
+	if n == 0 {
+		return fmt.Errorf("cannot remove primary email or email not found")
+	}
+	return nil
+}
+
+// SetPrimaryEmail sets an email as primary, demoting the current primary.
+// Also updates the denormalized email on the users table.
+func (cs *CommonStore) SetPrimaryEmail(ctx context.Context, emailID, userID string) error {
+	tx, err := cs.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	// Demote current primary
+	_, err = tx.ExecContext(ctx,
+		"UPDATE common.user_emails SET is_primary = FALSE WHERE user_id = $1 AND is_primary = TRUE",
+		userID)
+	if err != nil {
+		return err
+	}
+
+	// Promote new primary
+	var newEmail string
+	err = tx.QueryRowContext(ctx,
+		"UPDATE common.user_emails SET is_primary = TRUE WHERE id = $1 AND user_id = $2 RETURNING email",
+		emailID, userID).Scan(&newEmail)
+	if err != nil {
+		return fmt.Errorf("email not found")
+	}
+
+	// Update denormalized email on users table
+	_, err = tx.ExecContext(ctx,
+		"UPDATE common.users SET email = $1 WHERE id = $2",
+		newEmail, userID)
+	if err != nil {
+		return err
+	}
+
+	return tx.Commit()
+}
+
+// GetUserEmailByAddress looks up an email record by address.
+func (cs *CommonStore) GetUserEmailByAddress(ctx context.Context, email string) (*models.UserEmail, error) {
+	e := &models.UserEmail{}
+	const q = `SELECT id, user_id, email, is_primary, verified, verified_at, created_at
+		FROM common.user_emails WHERE email = $1`
+	err := cs.db.QueryRowContext(ctx, q, email).Scan(
+		&e.ID, &e.UserID, &e.Email, &e.IsPrimary, &e.Verified, &e.VerifiedAt, &e.CreatedAt)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	return e, err
+}
+
+// MarkUserEmailVerified marks an email as verified.
+func (cs *CommonStore) MarkUserEmailVerified(ctx context.Context, emailID string) error {
+	_, err := cs.db.ExecContext(ctx,
+		"UPDATE common.user_emails SET verified = TRUE, verified_at = NOW() WHERE id = $1",
+		emailID)
+	return err
+}
+
+// GetUserEmail returns a single email by ID and user.
+func (cs *CommonStore) GetUserEmail(ctx context.Context, emailID, userID string) (*models.UserEmail, error) {
+	e := &models.UserEmail{}
+	const q = `SELECT id, user_id, email, is_primary, verified, verified_at, created_at
+		FROM common.user_emails WHERE id = $1 AND user_id = $2`
+	err := cs.db.QueryRowContext(ctx, q, emailID, userID).Scan(
+		&e.ID, &e.UserID, &e.Email, &e.IsPrimary, &e.Verified, &e.VerifiedAt, &e.CreatedAt)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	return e, err
+}
+
+// HasVerifiedEmail checks if a user has at least one verified email.
+func (cs *CommonStore) HasVerifiedEmail(ctx context.Context, userID string) (bool, error) {
+	var count int
+	err := cs.db.QueryRowContext(ctx,
+		"SELECT COUNT(*) FROM common.user_emails WHERE user_id = $1 AND verified = TRUE",
+		userID).Scan(&count)
+	return count > 0, err
+}
+
+// ─── MFA Devices ────────────────────────────────────────────────────────────
+
+// ListMFADevices returns all MFA devices for a user.
+func (cs *CommonStore) ListMFADevices(ctx context.Context, userID string) ([]models.MFADevice, error) {
+	const q = `SELECT id, user_id, name, type, secret, email, verified, verified_at, last_used_at, created_at
+		FROM common.mfa_devices WHERE user_id = $1 ORDER BY created_at ASC`
+	rows, err := cs.db.QueryContext(ctx, q, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var devices []models.MFADevice
+	for rows.Next() {
+		var d models.MFADevice
+		if err := rows.Scan(&d.ID, &d.UserID, &d.Name, &d.Type, &d.Secret, &d.Email,
+			&d.Verified, &d.VerifiedAt, &d.LastUsedAt, &d.CreatedAt); err != nil {
+			return nil, err
+		}
+		devices = append(devices, d)
+	}
+	return devices, rows.Err()
+}
+
+// GetMFADevice returns a single MFA device.
+func (cs *CommonStore) GetMFADevice(ctx context.Context, deviceID, userID string) (*models.MFADevice, error) {
+	d := &models.MFADevice{}
+	const q = `SELECT id, user_id, name, type, secret, email, verified, verified_at, last_used_at, created_at
+		FROM common.mfa_devices WHERE id = $1 AND user_id = $2`
+	err := cs.db.QueryRowContext(ctx, q, deviceID, userID).Scan(
+		&d.ID, &d.UserID, &d.Name, &d.Type, &d.Secret, &d.Email,
+		&d.Verified, &d.VerifiedAt, &d.LastUsedAt, &d.CreatedAt)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	return d, err
+}
+
+// CreateMFADevice inserts a new MFA device.
+func (cs *CommonStore) CreateMFADevice(ctx context.Context, d *models.MFADevice) error {
+	if d.ID == "" {
+		d.ID = uuid.New().String()
+	}
+	d.CreatedAt = time.Now().UTC()
+	const q = `INSERT INTO common.mfa_devices (id, user_id, name, type, secret, email, created_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)`
+	_, err := cs.db.ExecContext(ctx, q, d.ID, d.UserID, d.Name, d.Type, d.Secret, d.Email, d.CreatedAt)
+	return err
+}
+
+// VerifyMFADevice marks a device as verified.
+func (cs *CommonStore) VerifyMFADevice(ctx context.Context, deviceID string) error {
+	_, err := cs.db.ExecContext(ctx,
+		"UPDATE common.mfa_devices SET verified = TRUE, verified_at = NOW() WHERE id = $1",
+		deviceID)
+	return err
+}
+
+// RemoveMFADevice deletes an MFA device.
+func (cs *CommonStore) RemoveMFADevice(ctx context.Context, deviceID, userID string) error {
+	_, err := cs.db.ExecContext(ctx,
+		"DELETE FROM common.mfa_devices WHERE id = $1 AND user_id = $2",
+		deviceID, userID)
+	return err
+}
+
+// UpdateMFADeviceLastUsed touches the last_used_at timestamp.
+func (cs *CommonStore) UpdateMFADeviceLastUsed(ctx context.Context, deviceID string) error {
+	_, err := cs.db.ExecContext(ctx,
+		"UPDATE common.mfa_devices SET last_used_at = NOW() WHERE id = $1",
+		deviceID)
+	return err
+}
+
+// GetVerifiedMFADevices returns only verified devices for a user (for login flow).
+func (cs *CommonStore) GetVerifiedMFADevices(ctx context.Context, userID string) ([]models.MFADevice, error) {
+	const q = `SELECT id, user_id, name, type, secret, email, verified, verified_at, last_used_at, created_at
+		FROM common.mfa_devices WHERE user_id = $1 AND verified = TRUE ORDER BY created_at ASC`
+	rows, err := cs.db.QueryContext(ctx, q, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var devices []models.MFADevice
+	for rows.Next() {
+		var d models.MFADevice
+		if err := rows.Scan(&d.ID, &d.UserID, &d.Name, &d.Type, &d.Secret, &d.Email,
+			&d.Verified, &d.VerifiedAt, &d.LastUsedAt, &d.CreatedAt); err != nil {
+			return nil, err
+		}
+		devices = append(devices, d)
+	}
+	return devices, rows.Err()
+}
+
+// HasVerifiedMFADevice checks if a user has at least one verified MFA device.
+func (cs *CommonStore) HasVerifiedMFADevice(ctx context.Context, userID string) (bool, error) {
+	var count int
+	err := cs.db.QueryRowContext(ctx,
+		"SELECT COUNT(*) FROM common.mfa_devices WHERE user_id = $1 AND verified = TRUE",
+		userID).Scan(&count)
+	return count > 0, err
+}
+
+// ─── MFA Toggle ─────────────────────────────────────────────────────────────
+
+// EnableMFA sets mfa_enabled = TRUE on the users table.
+func (cs *CommonStore) EnableMFA(ctx context.Context, userID string) error {
+	_, err := cs.db.ExecContext(ctx,
+		"UPDATE common.users SET mfa_enabled = TRUE WHERE id = $1",
+		userID)
+	return err
+}
+
+// DisableMFA sets mfa_enabled = FALSE and deletes recovery codes.
+func (cs *CommonStore) DisableMFA(ctx context.Context, userID string) error {
+	tx, err := cs.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	_, err = tx.ExecContext(ctx,
+		"UPDATE common.users SET mfa_enabled = FALSE WHERE id = $1", userID)
+	if err != nil {
+		return err
+	}
+
+	// Delete recovery codes
+	_, err = tx.ExecContext(ctx, "DELETE FROM common.mfa_recovery_codes WHERE user_id = $1", userID)
+	if err != nil {
+		return err
+	}
+
+	return tx.Commit()
+}
+
+// ─── Recovery Codes ─────────────────────────────────────────────────────────
+
+// CreateRecoveryCodes bulk-inserts hashed recovery codes for a user.
+// Deletes any existing codes first.
+func (cs *CommonStore) CreateRecoveryCodes(ctx context.Context, userID string, codeHashes []string) error {
+	tx, err := cs.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	_, err = tx.ExecContext(ctx, "DELETE FROM common.mfa_recovery_codes WHERE user_id = $1", userID)
+	if err != nil {
+		return err
+	}
+
+	const q = `INSERT INTO common.mfa_recovery_codes (user_id, code_hash) VALUES ($1, $2)`
+	for _, hash := range codeHashes {
+		if _, err := tx.ExecContext(ctx, q, userID, hash); err != nil {
+			return err
+		}
+	}
+
+	return tx.Commit()
+}
+
+// DeleteRecoveryCodes removes all recovery codes for a user.
+func (cs *CommonStore) DeleteRecoveryCodes(ctx context.Context, userID string) error {
+	_, err := cs.db.ExecContext(ctx,
+		"DELETE FROM common.mfa_recovery_codes WHERE user_id = $1", userID)
+	return err
+}
+
+// CountUnusedRecoveryCodes returns the number of unused recovery codes.
+func (cs *CommonStore) CountUnusedRecoveryCodes(ctx context.Context, userID string) (int, error) {
+	var count int
+	err := cs.db.QueryRowContext(ctx,
+		"SELECT COUNT(*) FROM common.mfa_recovery_codes WHERE user_id = $1 AND used_at IS NULL",
+		userID).Scan(&count)
+	return count, err
+}
+
+// ─── Email OTP ──────────────────────────────────────────────────────────────
+
+// CreateEmailOTP stores a hashed OTP code for email-based MFA.
+func (cs *CommonStore) CreateEmailOTP(ctx context.Context, userID, deviceID, codeHash string, expiresAt time.Time) error {
+	// Invalidate old codes first
+	cs.InvalidateEmailOTPs(ctx, userID, deviceID)
+
+	const q = `INSERT INTO common.email_otp_codes (user_id, device_id, code_hash, expires_at)
+		VALUES ($1, $2, $3, $4)`
+	_, err := cs.db.ExecContext(ctx, q, userID, deviceID, codeHash, expiresAt)
+	return err
+}
+
+// ValidateEmailOTP checks if a code matches and marks it as used.
+func (cs *CommonStore) ValidateEmailOTP(ctx context.Context, userID, deviceID, codeHash string) (bool, error) {
+	result, err := cs.db.ExecContext(ctx,
+		`UPDATE common.email_otp_codes
+		 SET used_at = NOW()
+		 WHERE user_id = $1 AND device_id = $2 AND code_hash = $3
+		   AND used_at IS NULL AND expires_at > NOW()`,
+		userID, deviceID, codeHash)
+	if err != nil {
+		return false, err
+	}
+	n, _ := result.RowsAffected()
+	return n > 0, nil
+}
+
+// InvalidateEmailOTPs marks all unused OTPs for a user+device as used.
+func (cs *CommonStore) InvalidateEmailOTPs(ctx context.Context, userID, deviceID string) {
+	_, _ = cs.db.ExecContext(ctx,
+		"UPDATE common.email_otp_codes SET used_at = NOW() WHERE user_id = $1 AND device_id = $2 AND used_at IS NULL",
+		userID, deviceID)
+}
+
+// ─── User Sessions ──────────────────────────────────────────────────────────
+
+// CreateSession inserts a new session row.
+func (cs *CommonStore) CreateSession(ctx context.Context, s *models.UserSession) error {
+	if s.ID == "" {
+		s.ID = uuid.New().String()
+	}
+	s.CreatedAt = time.Now().UTC()
+	s.LastActiveAt = s.CreatedAt
+
+	const q = `INSERT INTO common.user_sessions (id, user_id, jti, ip_address, user_agent, browser, os, device_type, created_at, last_active_at, expires_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`
+	_, err := cs.db.ExecContext(ctx, q, s.ID, s.UserID, s.JTI, s.IPAddress, s.UserAgent, s.Browser, s.OS, s.DeviceType, s.CreatedAt, s.LastActiveAt, s.ExpiresAt)
+	return err
+}
+
+// ListActiveSessions returns non-revoked, non-expired sessions for a user.
+func (cs *CommonStore) ListActiveSessions(ctx context.Context, userID string) ([]models.UserSession, error) {
+	const q = `SELECT id, user_id, jti, ip_address, user_agent, browser, os, device_type, created_at, last_active_at, expires_at
+		FROM common.user_sessions
+		WHERE user_id = $1 AND revoked_at IS NULL AND expires_at > NOW()
+		ORDER BY last_active_at DESC`
+	rows, err := cs.db.QueryContext(ctx, q, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var sessions []models.UserSession
+	for rows.Next() {
+		var s models.UserSession
+		if err := rows.Scan(&s.ID, &s.UserID, &s.JTI, &s.IPAddress, &s.UserAgent,
+			&s.Browser, &s.OS, &s.DeviceType,
+			&s.CreatedAt, &s.LastActiveAt, &s.ExpiresAt); err != nil {
+			return nil, err
+		}
+		sessions = append(sessions, s)
+	}
+	return sessions, rows.Err()
+}
+
+// RevokeSession revokes a specific session.
+func (cs *CommonStore) RevokeSession(ctx context.Context, sessionID, userID string) error {
+	result, err := cs.db.ExecContext(ctx,
+		"UPDATE common.user_sessions SET revoked_at = NOW() WHERE id = $1 AND user_id = $2 AND revoked_at IS NULL",
+		sessionID, userID)
+	if err != nil {
+		return err
+	}
+	n, _ := result.RowsAffected()
+	if n == 0 {
+		return fmt.Errorf("session not found")
+	}
+	return nil
+}
+
+// RevokeAllSessions revokes all sessions for a user except the one with the given JTI.
+func (cs *CommonStore) RevokeAllSessions(ctx context.Context, userID, exceptJTI string) error {
+	_, err := cs.db.ExecContext(ctx,
+		"UPDATE common.user_sessions SET revoked_at = NOW() WHERE user_id = $1 AND jti != $2 AND revoked_at IS NULL",
+		userID, exceptJTI)
+	return err
+}
+
+// IsSessionRevoked checks if a session has been revoked.
+func (cs *CommonStore) IsSessionRevoked(ctx context.Context, jti string) (bool, error) {
+	var revokedAt sql.NullTime
+	err := cs.db.QueryRowContext(ctx,
+		"SELECT revoked_at FROM common.user_sessions WHERE jti = $1",
+		jti).Scan(&revokedAt)
+	if err == sql.ErrNoRows {
+		// No session row → token predates session tracking, allow it
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return revokedAt.Valid, nil
+}
+
+// TouchSession updates the last_active_at timestamp.
+func (cs *CommonStore) TouchSession(ctx context.Context, jti string) error {
+	_, err := cs.db.ExecContext(ctx,
+		"UPDATE common.user_sessions SET last_active_at = NOW() WHERE jti = $1 AND revoked_at IS NULL",
+		jti)
+	return err
+}
+
+// RevokeSessionByJTI revokes a session by its JTI (used during logout).
+func (cs *CommonStore) RevokeSessionByJTI(ctx context.Context, jti string) error {
+	_, err := cs.db.ExecContext(ctx,
+		"UPDATE common.user_sessions SET revoked_at = NOW() WHERE jti = $1 AND revoked_at IS NULL",
+		jti)
+	return err
+}
+

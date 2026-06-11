@@ -1,10 +1,11 @@
 # ── Stage 1: Build UI ─────────────────────────────────────────────────────────
-FROM node:20-alpine AS ui-builder
+FROM node:24-alpine AS ui-builder
+RUN corepack enable && corepack prepare pnpm@10 --activate
 WORKDIR /app/ui
-COPY ui/package.json ui/package-lock.json ./
-RUN npm ci --ignore-scripts
+COPY ui/package.json ui/pnpm-lock.yaml ui/.npmrc ./
+RUN pnpm install --frozen-lockfile
 COPY ui/ ./
-RUN npm run build
+RUN pnpm run build
 
 # ── Stage 2: Build Go Server ─────────────────────────────────────────────────
 FROM golang:1.25-alpine AS go-builder

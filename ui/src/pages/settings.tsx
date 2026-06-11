@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react"
+import { useEffect, useState, useCallback } from "react"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
@@ -29,16 +29,14 @@ function MembersTab() {
   const [inviting, setInviting] = useState(false)
   const [error, setError] = useState("")
 
-  const loadMembers = () => {
-    setLoading(true)
+  const loadMembers = useCallback(() => {
     membersApi
       .list()
-      .then(setMembers)
-      .catch(() => setMembers([]))
-      .finally(() => setLoading(false))
-  }
+      .then((data) => { setMembers(data); setLoading(false) })
+      .catch(() => { setMembers([]); setLoading(false) })
+  }, [])
 
-  useEffect(loadMembers, [])
+  useEffect(() => { loadMembers() }, [loadMembers])
 
   const handleInvite = async (e: React.FormEvent) => {
     e.preventDefault()

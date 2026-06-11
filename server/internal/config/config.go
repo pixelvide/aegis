@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 )
 
 // Config holds all server configuration.
@@ -31,6 +32,27 @@ type Config struct {
 
 	// AllowedOrigins for CORS. Default: http://localhost:5173 (Vite dev server).
 	AllowedOrigins []string
+
+	// BaseURL is the public-facing URL of the app (used for email links).
+	// Default: http://localhost:8080.
+	BaseURL string
+
+	// SMTP configuration for transactional emails (password reset, MFA, etc.).
+	SMTP SMTPConfig
+
+	// ValkeyURL is the Valkey/Redis connection address (host:port).
+	// Default: empty (cache disabled). In Docker: valkey:6379.
+	ValkeyURL string
+}
+
+// SMTPConfig holds SMTP mail server settings.
+type SMTPConfig struct {
+	Host     string // SMTP server hostname. Default: localhost.
+	Port     int    // SMTP server port. Default: 1025 (MailDev).
+	Username string // SMTP auth username (empty for MailDev).
+	Password string // SMTP auth password (empty for MailDev).
+	From     string // Sender address. Default: noreply@aegis.local.
+	TLS      bool   // Use STARTTLS. Default: false.
 }
 
 // Load reads configuration from environment variables with secure defaults.
@@ -39,6 +61,13 @@ func Load() (*Config, error) {
 		Port:           8080,
 		Bind:           "127.0.0.1",
 		AllowedOrigins: []string{"http://localhost:5173"},
+		BaseURL:        "http://localhost:8080",
+		SMTP: SMTPConfig{
+			Host: "localhost",
+			Port: 1025,
+			From: "noreply@aegis.local",
+			TLS:  false,
+		},
 	}
 
 	if p := os.Getenv("AEGIS_PORT"); p != "" {
@@ -66,6 +95,39 @@ func Load() (*Config, error) {
 
 	if origins := os.Getenv("AEGIS_ALLOWED_ORIGINS"); origins != "" {
 		cfg.AllowedOrigins = splitAndTrim(origins)
+	}
+
+	if baseURL := os.Getenv("APP_BASE_URL"); baseURL != "" {
+		cfg.BaseURL = strings.TrimRight(baseURL, "/")
+	}
+
+	// SMTP
+	if h := os.Getenv("SMTP_HOST"); h != "" {
+		cfg.SMTP.Host = h
+	}
+	if p := os.Getenv("SMTP_PORT"); p != "" {
+		port, err := strconv.Atoi(p)
+		if err != nil {
+			return nil, fmt.Errorf("invalid SMTP_PORT %q: %w", p, err)
+		}
+		cfg.SMTP.Port = port
+	}
+	if u := os.Getenv("SMTP_USERNAME"); u != "" {
+		cfg.SMTP.Username = u
+	}
+	if pw := os.Getenv("SMTP_PASSWORD"); pw != "" {
+		cfg.SMTP.Password = pw
+	}
+	if from := os.Getenv("SMTP_FROM"); from != "" {
+		cfg.SMTP.From = from
+	}
+	if tls := os.Getenv("SMTP_TLS"); tls == "true" || tls == "1" {
+		cfg.SMTP.TLS = true
+	}
+
+	// Valkey (optional — cache disabled if empty)
+	if v := os.Getenv("VALKEY_URL"); v != "" {
+		cfg.ValkeyURL = v
 	}
 
 	return cfg, nil

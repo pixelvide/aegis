@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react"
+import { useEffect, useState, useCallback } from "react"
 import { Link } from "react-router-dom"
 import { SeverityBadge, FindingStatusBadge } from "@/components/severity-badge"
 import { Card, CardContent } from "@/components/ui/card"
@@ -14,16 +14,19 @@ export default function FindingsPage() {
   const [severityFilter, setSeverityFilter] = useState<string>("")
   const [statusFilter, setStatusFilter] = useState<string>("")
 
-  useEffect(() => {
-    setLoading(true)
+  const fetchFindings = useCallback((severity: string, status: string) => {
     findingsApi.list({
-      severity: severityFilter || undefined,
-      status: statusFilter || undefined,
+      severity: severity || undefined,
+      status: status || undefined,
     })
       .then(setFindings)
       .catch(() => setFindings([]))
       .finally(() => setLoading(false))
-  }, [severityFilter, statusFilter])
+  }, [])
+
+  useEffect(() => {
+    fetchFindings(severityFilter, statusFilter)
+  }, [fetchFindings, severityFilter, statusFilter])
 
   const severities: Severity[] = ["critical", "high", "medium", "low", "info"]
   const statuses: FindingStatus[] = ["open", "confirmed", "fixed", "false_positive", "wontfix"]
@@ -41,7 +44,7 @@ export default function FindingsPage() {
           <Filter className="h-4 w-4 text-muted-foreground" />
           <select
             value={severityFilter}
-            onChange={(e) => setSeverityFilter(e.target.value)}
+            onChange={(e) => { setLoading(true); setSeverityFilter(e.target.value) }}
             className="rounded-md border bg-background px-3 py-1.5 text-sm"
             id="severity-filter"
           >
@@ -52,7 +55,7 @@ export default function FindingsPage() {
           </select>
           <select
             value={statusFilter}
-            onChange={(e) => setStatusFilter(e.target.value)}
+            onChange={(e) => { setLoading(true); setStatusFilter(e.target.value) }}
             className="rounded-md border bg-background px-3 py-1.5 text-sm"
             id="status-filter"
           >
@@ -65,7 +68,7 @@ export default function FindingsPage() {
             <Button
               variant="ghost"
               size="sm"
-              onClick={() => { setSeverityFilter(""); setStatusFilter("") }}
+              onClick={() => { setLoading(true); setSeverityFilter(""); setStatusFilter("") }}
             >
               Clear
             </Button>

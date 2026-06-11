@@ -430,6 +430,9 @@ func (p *Postgres) GetDashboardStats(ctx context.Context) (*DashboardStats, erro
 	if err == nil && len(recent) > 10 {
 		recent = recent[:10]
 	}
+	if recent == nil {
+		recent = []models.Finding{}
+	}
 	stats.RecentFindings = recent
 
 	return stats, nil

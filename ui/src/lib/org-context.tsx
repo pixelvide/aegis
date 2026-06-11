@@ -50,7 +50,24 @@ export function OrgProvider({ children }: { children: React.ReactNode }) {
       .finally(() => setLoading(false))
   }, [])
 
-  useEffect(loadOrgs, [loadOrgs])
+  useEffect(() => {
+    orgsApi.list()
+      .then((data) => {
+        const orgList = data || []
+        setOrgs(orgList)
+
+        const savedSlug = localStorage.getItem(ORG_STORAGE_KEY)
+        const saved = orgList.find(o => o.slug === savedSlug)
+        const selected = saved || orgList[0] || null
+
+        if (selected) {
+          setCurrentOrgState(selected)
+          setCurrentOrg(selected.slug, selected.id)
+        }
+      })
+      .catch(() => setOrgs([]))
+      .finally(() => setLoading(false))
+  }, [])
 
   const switchOrg = useCallback((org: Organization) => {
     setCurrentOrgState(org)

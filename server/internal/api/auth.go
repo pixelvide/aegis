@@ -1,9 +1,15 @@
 package api
 
 import (
+	"context"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
+	"fmt"
 	"net/http"
 	"net/mail"
 	"strings"
+	"time"
 	"unicode"
 
 	authpkg "github.com/pixelvide/aegis/server/internal/auth"
@@ -86,6 +92,16 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Create primary email entry + send verification
+	primaryEmail, err := s.common.AddPrimaryUserEmail(r.Context(), user.ID, req.Email)
+	if err != nil {
+		// Non-fatal — user is created
+		_ = err
+	} else {
+		// Send verification email (fire-and-forget)
+		go s.sendVerificationEmail(user.ID, primaryEmail.ID, primaryEmail.Email)
+	}
+
 	// Create default org from user's name
 	orgSlug := store.SanitizeSlug(req.Name)
 	if len(orgSlug) < 3 {
@@ -104,22 +120,24 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 		s.common.AddOrgMember(r.Context(), org.ID, user.ID, "owner")
 	}
 
-	// Generate JWT
-	token, err := s.auth.GenerateToken(user.ID)
+	// Generate JWT + create session
+	token, jti, err := s.auth.GenerateToken(user.ID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to generate token")
 		return
 	}
 
+	s.createSession(r, user.ID, jti)
 	setAuthCookie(w, token)
 
 	writeJSON(w, http.StatusCreated, map[string]any{
-		"user": user,
+		"user":    user,
 		"message": "registration successful",
 	})
 }
 
 // handleLogin authenticates a user and returns a JWT cookie.
+// If the user has MFA enabled, returns an MFA challenge instead.
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	var req loginRequest
 	if err := decodeJSON(r, &req); err != nil {
@@ -151,22 +169,72 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Generate JWT
-	token, err := s.auth.GenerateToken(user.ID)
+	// Check if MFA is enabled
+	if user.MFAEnabled {
+		// Get verified MFA devices for the user
+		devices, err := s.common.GetVerifiedMFADevices(r.Context(), user.ID)
+		if err != nil || len(devices) == 0 {
+			// MFA enabled but no verified devices — shouldn't happen, allow login
+			goto issueToken
+		}
+
+		// Password correct but MFA required — issue a short-lived MFA token
+		mfaToken, err := s.auth.GenerateMFAToken(user.ID)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to generate MFA token")
+			return
+		}
+
+		// Build methods list (mask email for privacy)
+		methods := make([]map[string]string, len(devices))
+		for i, d := range devices {
+			methods[i] = map[string]string{
+				"id":   d.ID,
+				"type": d.Type,
+				"name": d.Name,
+			}
+			if d.Type == "email" {
+				methods[i]["name"] = maskEmail(d.Email)
+			}
+		}
+
+		writeJSON(w, http.StatusOK, map[string]any{
+			"mfa_required": true,
+			"mfa_token":    mfaToken,
+			"mfa_methods":  methods,
+		})
+		return
+	}
+
+issueToken:
+	// No MFA — generate full JWT + create session
+	token, jti, err := s.auth.GenerateToken(user.ID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to generate token")
 		return
 	}
 
+	s.createSession(r, user.ID, jti)
 	setAuthCookie(w, token)
+
+	// Send login notification email
+	ip := extractIP(r)
+	browser, osName, deviceType := parseUserAgent(r.UserAgent())
+	go s.sendLoginNotification(user.Email, user.Name, ip, browser, osName, deviceType)
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"user": user,
 	})
 }
 
-// handleLogout clears the auth cookie.
+// handleLogout clears the auth cookie and revokes the session.
 func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
+	// Revoke current session if we have a JTI
+	jti := middleware.JTIFromContext(r.Context())
+	if jti != "" {
+		_ = s.common.RevokeSessionByJTI(r.Context(), jti)
+	}
+
 	http.SetCookie(w, &http.Cookie{
 		Name:     middleware.CookieName,
 		Value:    "",
@@ -214,6 +282,126 @@ func setAuthCookie(w http.ResponseWriter, token string) {
 	})
 }
 
+// createSession creates a session row for the given user and JTI.
+func (s *Server) createSession(r *http.Request, userID, jti string) {
+	ua := r.UserAgent()
+	browser, os, deviceType := parseUserAgent(ua)
+
+	session := &models.UserSession{
+		UserID:     userID,
+		JTI:        jti,
+		IPAddress:  extractIP(r),
+		UserAgent:  ua,
+		Browser:    browser,
+		OS:         os,
+		DeviceType: deviceType,
+		ExpiresAt:  time.Now().UTC().Add(s.auth.TokenTTL()),
+	}
+	_ = s.common.CreateSession(r.Context(), session)
+}
+
+// extractIP gets the client IP from the request.
+func extractIP(r *http.Request) string {
+	// Check X-Forwarded-For first (reverse proxy)
+	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+		parts := strings.SplitN(xff, ",", 2)
+		return strings.TrimSpace(parts[0])
+	}
+	// Check X-Real-IP
+	if xri := r.Header.Get("X-Real-IP"); xri != "" {
+		return strings.TrimSpace(xri)
+	}
+	// Fall back to RemoteAddr
+	addr := r.RemoteAddr
+	if i := strings.LastIndex(addr, ":"); i != -1 {
+		return addr[:i]
+	}
+	return addr
+}
+
+// parseUserAgent extracts browser, OS, and device type from a User-Agent string.
+func parseUserAgent(ua string) (browser, os, deviceType string) {
+	// Browser detection
+	switch {
+	case strings.Contains(ua, "Edg/") || strings.Contains(ua, "Edge/"):
+		browser = "Edge"
+	case strings.Contains(ua, "OPR/") || strings.Contains(ua, "Opera"):
+		browser = "Opera"
+	case strings.Contains(ua, "Firefox/"):
+		browser = "Firefox"
+	case strings.Contains(ua, "Chrome/") && !strings.Contains(ua, "Edg/"):
+		browser = "Chrome"
+	case strings.Contains(ua, "Safari/") && !strings.Contains(ua, "Chrome"):
+		browser = "Safari"
+	default:
+		browser = "Unknown"
+	}
+
+	// OS detection
+	switch {
+	case strings.Contains(ua, "Windows"):
+		os = "Windows"
+	case strings.Contains(ua, "Mac OS X") || strings.Contains(ua, "Macintosh"):
+		os = "macOS"
+	case strings.Contains(ua, "Android"):
+		os = "Android"
+	case strings.Contains(ua, "iPhone") || strings.Contains(ua, "iPad"):
+		os = "iOS"
+	case strings.Contains(ua, "Linux"):
+		os = "Linux"
+	case strings.Contains(ua, "CrOS"):
+		os = "ChromeOS"
+	default:
+		os = "Unknown"
+	}
+
+	// Device type detection
+	switch {
+	case strings.Contains(ua, "Mobile") || strings.Contains(ua, "iPhone") || strings.Contains(ua, "Android"):
+		if strings.Contains(ua, "Tablet") || strings.Contains(ua, "iPad") {
+			deviceType = "tablet"
+		} else {
+			deviceType = "mobile"
+		}
+	case strings.Contains(ua, "iPad"):
+		deviceType = "tablet"
+	default:
+		deviceType = "desktop"
+	}
+
+	return
+}
+
+// sendLoginNotification sends an email alert about a new login.
+func (s *Server) sendLoginNotification(email, name, ip, browser, os, deviceType string) {
+	loginTime := time.Now().UTC().Format("Jan 02, 2006 at 15:04 UTC")
+	subject := "Aegis — New sign-in to your account"
+	body := fmt.Sprintf(`<h2>New Sign-In Detected</h2>
+<p>Hi %s,</p>
+<p>We noticed a new sign-in to your Aegis account:</p>
+<table style="border-collapse:collapse;margin:16px 0;">
+  <tr><td style="padding:4px 16px 4px 0;color:#666;">Browser</td><td style="padding:4px 0;">%s</td></tr>
+  <tr><td style="padding:4px 16px 4px 0;color:#666;">Operating System</td><td style="padding:4px 0;">%s</td></tr>
+  <tr><td style="padding:4px 16px 4px 0;color:#666;">Device</td><td style="padding:4px 0;">%s</td></tr>
+  <tr><td style="padding:4px 16px 4px 0;color:#666;">IP Address</td><td style="padding:4px 0;">%s</td></tr>
+  <tr><td style="padding:4px 16px 4px 0;color:#666;">Time</td><td style="padding:4px 0;">%s</td></tr>
+</table>
+<p>If this was you, no action is needed.</p>
+<p>If you don't recognize this activity, please <strong>change your password immediately</strong> and review your active sessions.</p>
+<p style="color:#666;font-size:12px;">Aegis Security Platform</p>
+`, name, browser, os, deviceType, ip, loginTime)
+	_ = s.email.Send(email, subject, body)
+}
+
+// maskEmail masks an email for privacy (e.g., "j***@example.com").
+func maskEmail(email string) string {
+	at := strings.Index(email, "@")
+	if at <= 1 {
+		return email
+	}
+	return string(email[0]) + "***" + email[at:]
+}
+
 // validatePassword enforces minimum security requirements.
 func validatePassword(pw string) error {
 	if len(pw) < 8 {
@@ -239,3 +427,27 @@ func validatePassword(pw string) error {
 type passwordError struct{ msg string }
 
 func (e *passwordError) Error() string { return e.msg }
+
+// sendVerificationEmail creates a verification token and emails it.
+// Safe to call from a goroutine (uses background context).
+func (s *Server) sendVerificationEmail(userID, emailID, emailAddr string) {
+	ctx := context.Background()
+
+	tokenBytes := make([]byte, 32)
+	if _, err := rand.Read(tokenBytes); err != nil {
+		return
+	}
+	token := hex.EncodeToString(tokenBytes)
+	tokenHash := fmt.Sprintf("%x", sha256.Sum256([]byte(token)))
+	expiresAt := time.Now().UTC().Add(24 * time.Hour)
+
+	if err := s.common.CreatePasswordResetToken(ctx, userID, tokenHash, expiresAt); err != nil {
+		return
+	}
+
+	verifyURL := fmt.Sprintf("%s/verify-email?token=%s&email_id=%s", s.config.BaseURL, token, emailID)
+	subject := "Verify your email address"
+	body := fmt.Sprintf("Click the following link to verify your email:\n\n%s\n\nThis link expires in 24 hours.", verifyURL)
+
+	_ = s.email.Send(emailAddr, subject, body)
+}

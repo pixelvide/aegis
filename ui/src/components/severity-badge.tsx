@@ -20,6 +20,7 @@ const statusMap: Record<FindingStatus, { label: string; variant: "default" | "su
   fixed: { label: "Fixed", variant: "success" },
   false_positive: { label: "False Positive", variant: "secondary" },
   wontfix: { label: "Won't Fix", variant: "secondary" },
+  verified: { label: "Verified", variant: "success" },
 }
 
 export function FindingStatusBadge({ status }: { status: FindingStatus }) {

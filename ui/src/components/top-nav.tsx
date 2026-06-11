@@ -11,6 +11,7 @@ const routeNames: Record<string, string> = {
   "/findings": "Findings",
   "/agents": "Agents",
   "/settings": "Settings",
+  "/profile": "Profile",
   "/reports": "Reports",
   "/analytics": "Analytics",
 }

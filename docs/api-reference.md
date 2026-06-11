@@ -109,6 +109,7 @@ Returns the current user and their organizations.
     "email": "user@example.com",
     "name": "John Doe",
     "avatar_url": "",
+    "mfa_enabled": false,
     "created_at": "2026-01-01T00:00:00Z"
   },
   "orgs": [
@@ -121,6 +122,440 @@ Returns the current user and their organizations.
     }
   ]
 }
+```
+
+---
+
+## Password Reset
+
+### POST `/auth/forgot-password`
+
+Request a password reset email. Always returns 200 regardless of whether the email exists (prevents enumeration).
+
+**Request:**
+```json
+{ "email": "user@example.com" }
+```
+
+**Response (200):**
+```json
+{ "message": "If that email is registered, a password reset link has been sent" }
+```
+
+---
+
+### POST `/auth/reset-password`
+
+Reset password using the token from the email link. Token is single-use and expires after 1 hour.
+
+**Request:**
+```json
+{
+  "token": "hex-encoded-token-from-email",
+  "password": "NewSecureP@ss1"
+}
+```
+
+**Response (200):**
+```json
+{ "message": "password has been reset successfully" }
+```
+
+**Errors:**
+- `400` — Invalid/expired token, weak password
+
+---
+
+### POST `/auth/change-password` 🔒
+
+Change password for the authenticated user. Requires current password verification.
+
+**Request:**
+```json
+{
+  "current_password": "OldP@ss1",
+  "new_password": "NewSecureP@ss1"
+}
+```
+
+**Response (200):**
+```json
+{ "message": "password changed successfully" }
+```
+
+**Errors:**
+- `401` — Current password incorrect
+- `400` — Weak new password
+
+---
+
+## Multi-Factor Authentication (MFA)
+
+### Login with MFA
+
+When a user with MFA enabled calls `POST /auth/login`, instead of setting the auth cookie, the server returns an MFA challenge:
+
+**Response (200) — MFA required:**
+```json
+{
+  "mfa_required": true,
+  "mfa_token": "short-lived-jwt"
+}
+```
+
+The `mfa_token` is valid for 5 minutes and must be submitted to `/auth/mfa/validate` with a TOTP code.
+
+---
+
+### POST `/auth/mfa/validate`
+
+Complete login when MFA is required. Accepts a TOTP code, email OTP, or recovery code.
+
+**Request (TOTP or email OTP):**
+```json
+{
+  "mfa_token": "jwt-from-login-response",
+  "device_id": "device-uuid",
+  "code": "123456",
+  "is_recovery": false
+}
+```
+
+**Request (Recovery code):**
+```json
+{
+  "mfa_token": "jwt-from-login-response",
+  "code": "a1b2c3d4",
+  "is_recovery": true
+}
+```
+
+**Response (200):** Sets auth cookie + returns user. If a recovery code was used, includes remaining count:
+```json
+{
+  "user": { "..." },
+  "recovery_codes_remaining": 7
+}
+```
+
+**Errors:**
+- `401` — Invalid/expired MFA token, invalid code
+
+---
+
+### POST `/auth/mfa/send-email-otp`
+
+Send an OTP code to an email MFA device during login (before full auth).
+
+**Request:**
+```json
+{
+  "mfa_token": "jwt-from-login-response",
+  "device_id": "email-device-uuid"
+}
+```
+
+**Response (200):**
+```json
+{ "message": "Verification code sent to j***@example.com" }
+```
+
+---
+
+### POST `/auth/verify-email`
+
+Verify an email address using the token from the email link. Token is single-use and expires after 24 hours.
+
+**Request:**
+```json
+{
+  "token": "hex-encoded-token-from-email",
+  "email_id": "user-email-uuid"
+}
+```
+
+**Response (200):**
+```json
+{ "message": "Email verified successfully" }
+```
+
+**Errors:**
+- `400` — Invalid/expired verification link
+
+---
+
+## Profile — Emails 🔒
+
+### GET `/profile/emails`
+
+List all email addresses for the authenticated user.
+
+**Response (200):**
+```json
+{
+  "emails": [
+    {
+      "id": "uuid",
+      "email": "user@example.com",
+      "is_primary": true,
+      "verified": true,
+      "verified_at": "2026-01-01T00:00:00Z",
+      "created_at": "2026-01-01T00:00:00Z"
+    }
+  ]
+}
+```
+
+---
+
+### POST `/profile/emails`
+
+Add a new (unverified) email address.
+
+**Request:**
+```json
+{ "email": "new@example.com" }
+```
+
+**Response (201):** Email object.
+
+**Errors:**
+- `400` — Invalid email
+- `409` — Email already in use
+
+---
+
+### DELETE `/profile/emails/{id}`
+
+Remove a non-primary email address.
+
+**Response (204):** No content.
+
+**Errors:**
+- `400` — Cannot remove primary email
+
+---
+
+### POST `/profile/emails/{id}/set-primary`
+
+Set a verified email as the user's primary email.
+
+**Response (200):**
+```json
+{ "message": "Primary email updated" }
+```
+
+**Errors:**
+- `400` — Email not verified, or not found
+
+---
+
+### POST `/profile/emails/{id}/send-verification`
+
+Send a verification email link to the specified email address.
+
+**Response (200):**
+```json
+{ "message": "Verification email sent" }
+```
+
+**Errors:**
+- `409` — Email is already verified
+
+---
+
+## Profile — MFA 🔒
+
+### GET `/profile/mfa/devices`
+
+List all MFA devices for the authenticated user.
+
+**Response (200):**
+```json
+{
+  "devices": [
+    { "id": "uuid", "name": "Work Phone", "type": "totp", "verified": true, "last_used_at": "..." }
+  ],
+  "mfa_enabled": true
+}
+```
+
+---
+
+### POST `/profile/mfa/devices/totp`
+
+Create a new TOTP device (unverified). Returns setup info.
+
+**Request:**
+```json
+{ "name": "Work Phone" }
+```
+
+**Response (201):**
+```json
+{
+  "device": { "id": "uuid", "name": "Work Phone", "type": "totp", "verified": false },
+  "secret": "BASE32SECRET",
+  "url": "otpauth://totp/Aegis:user@example.com?secret=BASE32SECRET&issuer=Aegis"
+}
+```
+
+---
+
+### POST `/profile/mfa/devices/totp/{id}/verify`
+
+Verify a TOTP device with a 6-digit code.
+
+**Request:**
+```json
+{ "code": "123456" }
+```
+
+**Response (200):**
+```json
+{ "message": "TOTP device verified successfully" }
+```
+
+---
+
+### POST `/profile/mfa/devices/email`
+
+Create an email OTP MFA device from a verified email address.
+
+**Request:**
+```json
+{ "email_id": "user-email-uuid" }
+```
+
+**Response (201):** Device object.
+
+**Errors:**
+- `400` — Email must be verified first
+
+---
+
+### DELETE `/profile/mfa/devices/{id}`
+
+Remove an MFA device (password required).
+
+**Request:**
+```json
+{ "password": "CurrentP@ss1" }
+```
+
+**Response (200):**
+```json
+{ "message": "MFA device removed" }
+```
+
+---
+
+### POST `/profile/mfa/enable`
+
+Enable MFA. Requires at least one verified device or verified email. Generates 8 recovery codes.
+
+**Response (200):**
+```json
+{
+  "message": "MFA has been enabled",
+  "recovery_codes": ["abcd1234", "efgh5678", "..."]
+}
+```
+
+> ⚠️ Save the recovery codes immediately — they cannot be retrieved again.
+
+**Errors:**
+- `400` — No verified device or email
+- `409` — MFA already enabled
+
+---
+
+### POST `/profile/mfa/disable`
+
+Disable MFA. Requires password confirmation. Deletes recovery codes.
+
+**Request:**
+```json
+{ "password": "CurrentP@ss1" }
+```
+
+**Response (200):**
+```json
+{ "message": "MFA has been disabled" }
+```
+
+---
+
+### GET `/profile/mfa/recovery-codes`
+
+Get the count of unused recovery codes.
+
+**Response (200):**
+```json
+{ "remaining": 6, "total": 8 }
+```
+
+---
+
+### POST `/profile/mfa/recovery-codes/regenerate`
+
+Regenerate all recovery codes (password required). Old codes are invalidated.
+
+**Request:**
+```json
+{ "password": "CurrentP@ss1" }
+```
+
+**Response (200):**
+```json
+{
+  "recovery_codes": ["abcd1234", "efgh5678", "..."],
+  "message": "Recovery codes regenerated. Old codes are now invalid."
+}
+```
+
+---
+
+## Profile — Sessions 🔒
+
+### GET `/profile/sessions`
+
+List active sessions for the authenticated user. Current session is flagged.
+
+**Response (200):**
+```json
+{
+  "sessions": [
+    {
+      "id": "uuid",
+      "ip_address": "192.168.1.1",
+      "user_agent": "Mozilla/5.0...",
+      "created_at": "2026-01-01T00:00:00Z",
+      "last_active_at": "2026-01-01T12:00:00Z",
+      "expires_at": "2026-01-02T00:00:00Z",
+      "current": true
+    }
+  ]
+}
+```
+
+---
+
+### DELETE `/profile/sessions/{id}`
+
+Revoke a specific session.
+
+**Response (204):** No content.
+
+---
+
+### DELETE `/profile/sessions`
+
+Revoke all sessions except the current one.
+
+**Response (200):**
+```json
+{ "message": "All other sessions have been revoked" }
 ```
 
 ---

@@ -22,7 +22,9 @@ import (
 
 	"github.com/pixelvide/aegis/server/internal/api"
 	"github.com/pixelvide/aegis/server/internal/auth"
+	"github.com/pixelvide/aegis/server/internal/cache"
 	"github.com/pixelvide/aegis/server/internal/config"
+	"github.com/pixelvide/aegis/server/internal/email"
 	"github.com/pixelvide/aegis/server/internal/store"
 )
 
@@ -64,13 +66,31 @@ func run() error {
 	}
 	log.Printf("🔐 Auth service ready")
 
+	// Initialize email service (SMTP)
+	emailSvc := email.New(cfg.SMTP)
+
+	// Initialize Valkey cache (optional — graceful degradation to DB-only)
+	var cacheClient *cache.Client
+	if cfg.ValkeyURL != "" {
+		cacheClient, err = cache.New(cfg.ValkeyURL)
+		if err != nil {
+			log.Printf("⚠️  Valkey unavailable (%v) — falling back to DB-only session checks", err)
+			cacheClient = nil
+		} else {
+			defer cacheClient.Close()
+			log.Printf("⚡ Valkey connected (%s)", cfg.ValkeyURL)
+		}
+	} else {
+		log.Printf("⚡ Valkey not configured — using DB-only session checks")
+	}
+
 	// Initialize OTel metrics with Prometheus exporter
 	metrics, metricsHandler, metricsShutdown := api.InitMetrics(db)
 	defer metricsShutdown(context.Background())
 	log.Printf("📊 Metrics ready (Prometheus at /metrics)")
 
 	// Create API server
-	apiSrv := api.New(common, authSvc, cfg)
+	apiSrv := api.New(common, authSvc, emailSvc, cacheClient, cfg)
 
 	// Health check handler
 	health := api.NewHealthHandler(db)

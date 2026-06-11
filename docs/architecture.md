@@ -49,11 +49,11 @@ Shared across all organizations:
 
 ```sql
 common.schema_migrations   -- version tracking
-common.organizations       -- org registry (id, name, slug, plan)
+common.organizations       -- org registry (id, name, slug, plan, schema_version)
 common.users               -- user accounts (email, password_hash)
 common.org_members          -- org ↔ user mapping (role)
 common.app_config          -- key/value settings
-common.feature_flags       -- toggleable features
+common.feature_flags       -- global toggleable features (platform-wide)
 ```
 
 ### Per-Org Schema (`org_<uuid>`)
@@ -61,11 +61,13 @@ common.feature_flags       -- toggleable features
 Each org gets its own isolated schema:
 
 ```sql
-org_xxx.findings           -- vulnerability findings
-org_xxx.exploits           -- PoC exploits
-org_xxx.api_tokens         -- agent authentication tokens
-org_xxx.projects           -- code projects
-org_xxx.scans              -- security scans (legacy)
+org_xxx.findings              -- vulnerability findings
+org_xxx.exploits              -- PoC exploits
+org_xxx.api_tokens            -- agent authentication tokens
+org_xxx.projects              -- code projects
+org_xxx.scans                 -- security scans (legacy)
+org_xxx.org_feature_flags     -- per-org feature toggles (planned)
+org_xxx.org_schema_migrations -- per-org migration tracking (planned)
 ```
 
 ### Schema Naming

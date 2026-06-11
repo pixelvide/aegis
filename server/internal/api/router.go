@@ -8,7 +8,9 @@ import (
 	"strings"
 
 	authpkg "github.com/pixelvide/aegis/server/internal/auth"
+	"github.com/pixelvide/aegis/server/internal/cache"
 	"github.com/pixelvide/aegis/server/internal/config"
+	"github.com/pixelvide/aegis/server/internal/email"
 	"github.com/pixelvide/aegis/server/internal/middleware"
 	"github.com/pixelvide/aegis/server/internal/store"
 )
@@ -17,15 +19,19 @@ import (
 type Server struct {
 	common *store.CommonStore
 	auth   *authpkg.Service
+	email  *email.Service
+	cache  *cache.Client
 	config *config.Config
 	mux    *http.ServeMux
 }
 
 // New creates a new API server.
-func New(common *store.CommonStore, authSvc *authpkg.Service, cfg *config.Config) *Server {
+func New(common *store.CommonStore, authSvc *authpkg.Service, emailSvc *email.Service, cacheClient *cache.Client, cfg *config.Config) *Server {
 	srv := &Server{
 		common: common,
 		auth:   authSvc,
+		email:  emailSvc,
+		cache:  cacheClient,
 		config: cfg,
 		mux:    http.NewServeMux(),
 	}
@@ -61,18 +67,42 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 // authMiddleware wraps a handler with authentication.
 func (s *Server) authMiddleware(next http.HandlerFunc) http.HandlerFunc {
-	authMw := middleware.Auth(s.auth, s.common)
+	authMw := middleware.Auth(s.auth, s.common, s.cache)
 	return func(w http.ResponseWriter, r *http.Request) {
 		authMw(http.HandlerFunc(next)).ServeHTTP(w, r)
 	}
 }
 
-// protectedMiddleware wraps a handler with auth + tenant resolution.
+// verifiedMiddleware wraps a handler with auth + primary email verification.
+// Returns 403 if the user's primary email is not verified.
+func (s *Server) verifiedMiddleware(next http.HandlerFunc) http.HandlerFunc {
+	return s.authMiddleware(func(w http.ResponseWriter, r *http.Request) {
+		user := middleware.UserFromContext(r.Context())
+		if user != nil && !user.EmailVerified {
+			w.Header().Set("Content-Type", "application/json; charset=utf-8")
+			w.WriteHeader(http.StatusForbidden)
+			w.Write([]byte(`{"error":"email_not_verified","message":"Please verify your email address before continuing"}`))
+			return
+		}
+		next(w, r)
+	})
+}
+
+// protectedMiddleware wraps a handler with auth + email verification + tenant resolution.
 func (s *Server) protectedMiddleware(next http.HandlerFunc) http.HandlerFunc {
-	authMw := middleware.Auth(s.auth, s.common)
+	authMw := middleware.Auth(s.auth, s.common, s.cache)
 	tenantMw := middleware.TenantResolver(s.common)
 	return func(w http.ResponseWriter, r *http.Request) {
-		authMw(tenantMw(http.HandlerFunc(next))).ServeHTTP(w, r)
+		authMw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			user := middleware.UserFromContext(r.Context())
+			if user != nil && !user.EmailVerified {
+				w.Header().Set("Content-Type", "application/json; charset=utf-8")
+				w.WriteHeader(http.StatusForbidden)
+				w.Write([]byte(`{"error":"email_not_verified","message":"Please verify your email address before continuing"}`))
+				return
+			}
+			tenantMw(http.HandlerFunc(next)).ServeHTTP(w, r)
+		})).ServeHTTP(w, r)
 	}
 }
 
@@ -92,15 +122,58 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /api/v1/auth/logout", s.handleLogout)
 	s.mux.HandleFunc("GET /api/v1/auth/me", s.authMiddleware(s.handleMe))
 
-	// ─── Orgs (authenticated, no tenant context) ────────────────────
-	s.mux.HandleFunc("POST /api/v1/orgs", s.authMiddleware(s.handleCreateOrg))
-	s.mux.HandleFunc("GET /api/v1/orgs", s.authMiddleware(s.handleListOrgs))
-	s.mux.HandleFunc("GET /api/v1/orgs/{slug}", s.authMiddleware(s.handleGetOrg))
+	// Password reset (public)
+	s.mux.HandleFunc("POST /api/v1/auth/forgot-password", s.handleForgotPassword)
+	s.mux.HandleFunc("POST /api/v1/auth/reset-password", s.handleResetPassword)
+
+	// Password change (requires verified email)
+	s.mux.HandleFunc("POST /api/v1/auth/change-password", s.verifiedMiddleware(s.handleChangePassword))
+
+	// MFA validation during login (public — uses MFA token, not full auth)
+	s.mux.HandleFunc("POST /api/v1/auth/mfa/validate", s.handleMFAValidate)
+	s.mux.HandleFunc("POST /api/v1/auth/mfa/send-email-otp", s.handleSendEmailOTP)
+
+	// Email verification (public — uses token from email link)
+	s.mux.HandleFunc("POST /api/v1/auth/verify-email", s.handleVerifyEmail)
+
+	// ─── Profile (authenticated, no tenant context) ──────────────────
+	// Emails — accessible WITHOUT verified email (needed to verify!)
+	s.mux.HandleFunc("GET /api/v1/profile/emails", s.authMiddleware(s.handleListEmails))
+	s.mux.HandleFunc("POST /api/v1/profile/emails", s.authMiddleware(s.handleAddEmail))
+	s.mux.HandleFunc("DELETE /api/v1/profile/emails/{id}", s.authMiddleware(s.handleRemoveEmail))
+	s.mux.HandleFunc("POST /api/v1/profile/emails/{id}/set-primary", s.authMiddleware(s.handleSetPrimaryEmail))
+	s.mux.HandleFunc("POST /api/v1/profile/emails/{id}/send-verification", s.authMiddleware(s.handleSendEmailVerification))
+
+	// MFA devices (requires verified email)
+	s.mux.HandleFunc("GET /api/v1/profile/mfa/devices", s.verifiedMiddleware(s.handleListMFADevices))
+	s.mux.HandleFunc("POST /api/v1/profile/mfa/devices/totp", s.verifiedMiddleware(s.handleAddTOTPDevice))
+	s.mux.HandleFunc("POST /api/v1/profile/mfa/devices/totp/{id}/verify", s.verifiedMiddleware(s.handleVerifyTOTPDevice))
+	s.mux.HandleFunc("POST /api/v1/profile/mfa/devices/email", s.verifiedMiddleware(s.handleAddEmailMFADevice))
+	s.mux.HandleFunc("POST /api/v1/profile/mfa/devices/email/{id}/verify", s.verifiedMiddleware(s.handleVerifyEmailMFADevice))
+	s.mux.HandleFunc("DELETE /api/v1/profile/mfa/devices/{id}", s.verifiedMiddleware(s.handleRemoveMFADevice))
+
+	// MFA toggle (requires verified email)
+	s.mux.HandleFunc("POST /api/v1/profile/mfa/enable", s.verifiedMiddleware(s.handleEnableMFA))
+	s.mux.HandleFunc("POST /api/v1/profile/mfa/disable", s.verifiedMiddleware(s.handleDisableMFA))
+
+	// Recovery codes (requires verified email)
+	s.mux.HandleFunc("GET /api/v1/profile/mfa/recovery-codes", s.verifiedMiddleware(s.handleRecoveryCodesCount))
+	s.mux.HandleFunc("POST /api/v1/profile/mfa/recovery-codes/regenerate", s.verifiedMiddleware(s.handleRegenerateRecoveryCodes))
+
+	// Sessions — accessible without verified email (can still manage sessions)
+	s.mux.HandleFunc("GET /api/v1/profile/sessions", s.authMiddleware(s.handleListSessions))
+	s.mux.HandleFunc("DELETE /api/v1/profile/sessions/{id}", s.authMiddleware(s.handleRevokeSession))
+	s.mux.HandleFunc("DELETE /api/v1/profile/sessions", s.authMiddleware(s.handleRevokeAllSessions))
+
+	// ─── Orgs (requires verified email) ──────────────────────────────
+	s.mux.HandleFunc("POST /api/v1/orgs", s.verifiedMiddleware(s.handleCreateOrg))
+	s.mux.HandleFunc("GET /api/v1/orgs", s.verifiedMiddleware(s.handleListOrgs))
+	s.mux.HandleFunc("GET /api/v1/orgs/{slug}", s.verifiedMiddleware(s.handleGetOrg))
 
 	// ─── Feature flags (authenticated) ──────────────────────────────
 	s.mux.HandleFunc("GET /api/v1/config/features", s.authMiddleware(s.handleListFeatureFlags))
 
-	// ─── Tenant-scoped routes (auth + org context) ──────────────────
+	// ─── Tenant-scoped routes (auth + verified email + org context) ──
 	// Scans (read-only, legacy data)
 	s.mux.HandleFunc("GET /api/v1/scans", s.protectedMiddleware(s.handleListScans))
 	s.mux.HandleFunc("GET /api/v1/scans/{id}", s.protectedMiddleware(s.handleGetScan))

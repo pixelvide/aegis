@@ -48,6 +48,7 @@ export default function DashboardPage() {
   }
 
   const s = stats!
+  const recentFindings = s.recent_findings ?? []
 
   return (
     <div className="flex flex-col gap-4 md:gap-6">
@@ -122,7 +123,7 @@ export default function DashboardPage() {
             <CardTitle className="text-sm font-medium">Recent Findings</CardTitle>
           </CardHeader>
           <CardContent>
-            {s.recent_findings.length === 0 ? (
+            {recentFindings.length === 0 ? (
               <div className="text-center py-10 text-muted-foreground">
                 <Bug className="h-8 w-8 mx-auto mb-3 opacity-40" />
                 <p className="text-sm font-medium">No findings yet</p>
@@ -141,7 +142,7 @@ export default function DashboardPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {s.recent_findings.map((f) => (
+                    {recentFindings.map((f) => (
                       <tr key={f.id} className="border-b last:border-0 hover:bg-muted/50 transition-colors">
                         <td className="px-6 py-3 font-mono text-xs text-muted-foreground">{f.id}</td>
                         <td className="px-6 py-3">

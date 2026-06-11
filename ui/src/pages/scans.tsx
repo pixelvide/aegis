@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react"
+import { useEffect, useState, useCallback } from "react"
 import { Link } from "react-router-dom"
 import { ScanStatusBadge } from "@/components/severity-badge"
 import { Card, CardContent } from "@/components/ui/card"
@@ -18,15 +18,20 @@ export default function ScansPage() {
   const [scans, setScans] = useState<Scan[]>([])
   const [loading, setLoading] = useState(true)
 
-  const loadScans = () => {
+  const loadScans = useCallback(() => {
     setLoading(true)
     scansApi.list()
       .then(setScans)
       .catch(() => setScans([]))
       .finally(() => setLoading(false))
-  }
+  }, [])
 
-  useEffect(loadScans, [])
+  useEffect(() => {
+    scansApi.list()
+      .then(setScans)
+      .catch(() => setScans([]))
+      .finally(() => setLoading(false))
+  }, [])
 
   const handleDelete = async (id: string) => {
     await scansApi.delete(id)
