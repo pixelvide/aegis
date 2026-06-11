@@ -109,6 +109,30 @@ export default function LoginPage() {
       if (data.recovery_codes_remaining !== undefined && data.recovery_codes_remaining < 3) {
         console.log(`Warning: only ${data.recovery_codes_remaining} recovery codes remaining`)
       }
+
+      // Redirect to org subdomain after MFA success
+      try {
+        const orgsRes = await fetch("/api/v1/orgs", {
+          credentials: "include",
+          headers: { "Content-Type": "application/json" },
+        })
+        if (orgsRes.ok) {
+          const orgsData = await orgsRes.json()
+          const baseDomain = orgsData.base_domain
+          const orgs = orgsData.orgs || []
+
+          if (baseDomain && orgs.length > 0) {
+            const savedSlug = localStorage.getItem("aegis_current_org_slug")
+            const org = orgs.find((o: { slug: string }) => o.slug === savedSlug) || orgs[0]
+            const protocol = window.location.protocol
+            const port = window.location.port ? `:${window.location.port}` : ""
+            window.location.href = `${protocol}//${org.slug}.${baseDomain}${port}/`
+            return
+          }
+        }
+      } catch {
+        // Fall through to default redirect
+      }
       window.location.href = "/"
     } catch (err: unknown) {
       toast.error(err instanceof Error ? err.message : "Verification failed")

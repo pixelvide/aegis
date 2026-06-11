@@ -33,6 +33,20 @@ High-priority items to make the existing platform fully functional end-to-end.
   - `verified` status added to findings list filter dropdown
   - Project filter dropdown on findings list page
 
+### Org Creation UI
+- **Status:** ✅ Completed (2026-06-12)
+- **Priority:** 🔴 Critical
+- **Description:** Users can create new organizations from the sidebar org switcher. The backend existed but the UI had no dialog wired to it.
+- **Implemented:**
+  - Create Organization dialog (name + auto-generated slug + slug preview)
+  - Slug validation (3-50 chars, lowercase alphanumeric + hyphens, reserved slug check)
+  - Live subdomain preview (`slug.aegis.io`)
+  - Error display for duplicate slugs, reserved names, and validation failures
+  - Backend: improved error handling (409 Conflict for reserved/duplicate slugs, plan allowlist validation)
+  - Org switcher "Create Organization" button wired to dialog
+  - Auto-switch to new org after creation
+  - "No Organization" empty state now clickable to open dialog
+
 ---
 
 ## Phase 2 — Reports & Analytics
@@ -978,3 +992,4 @@ Hardening features for session integrity, threat detection, and token lifecycle.
 | Finding detail enhancements (CVE, CVSS, seen_count, last_seen_at) | 2026-06-11 |
 | Findings filters (verified status, project filter) | 2026-06-11 |
 | Base domain auth restriction (auth only on base domain, cookie domain scoping, subdomain redirect) | 2026-06-11 |
+| Org Creation UI (create org dialog, slug validation, auto-switch) | 2026-06-12 |

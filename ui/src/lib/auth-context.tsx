@@ -1,5 +1,6 @@
 import { createContext, useContext, useState, useEffect, useCallback } from "react"
 import { useNavigate, useLocation } from "react-router-dom"
+import type { OrgsListResponse } from "@/lib/api"
 
 interface User {
   id: string
@@ -107,6 +108,36 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   }, [loading, user, location.pathname, navigate])
 
+  // Redirect to the user's first org subdomain after auth.
+  // When base_domain is set (production), navigates to {slug}.{base_domain}.
+  // In dev mode (no base_domain), just navigates to /.
+  const redirectToOrg = useCallback(async () => {
+    try {
+      const res = await fetch("/api/v1/orgs", {
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+      })
+      if (res.ok) {
+        const data: OrgsListResponse = await res.json()
+        const baseDomain = data.base_domain
+        const orgs = data.orgs || []
+
+        if (baseDomain && orgs.length > 0) {
+          // Pick the saved org or fall back to the first one
+          const savedSlug = localStorage.getItem("aegis_current_org_slug")
+          const org = orgs.find(o => o.slug === savedSlug) || orgs[0]
+          const protocol = window.location.protocol
+          const port = window.location.port ? `:${window.location.port}` : ""
+          window.location.href = `${protocol}//${org.slug}.${baseDomain}${port}/`
+          return
+        }
+      }
+    } catch {
+      // Fall through to default navigation
+    }
+    navigate("/", { replace: true })
+  }, [navigate])
+
   const login = useCallback(async (email: string, password: string): Promise<LoginResult | void> => {
     const res = await fetch("/api/v1/auth/login", {
       method: "POST",
@@ -132,9 +163,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (returnTo) {
       window.location.href = returnTo
     } else {
-      navigate("/", { replace: true })
+      await redirectToOrg()
     }
-  }, [navigate])
+  }, [redirectToOrg])
 
   const register = useCallback(async (email: string, password: string, name: string) => {
     const res = await fetch("/api/v1/auth/register", {
@@ -155,9 +186,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (returnTo) {
       window.location.href = returnTo
     } else {
-      navigate("/", { replace: true })
+      await redirectToOrg()
     }
-  }, [navigate])
+  }, [redirectToOrg])
 
   const logout = useCallback(async () => {
     await fetch("/api/v1/auth/logout", {

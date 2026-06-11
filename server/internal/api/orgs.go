@@ -3,6 +3,7 @@ package api
 import (
 	"net/http"
 	"regexp"
+	"strings"
 
 	"github.com/pixelvide/aegis/server/internal/middleware"
 	"github.com/pixelvide/aegis/server/internal/models"
@@ -18,6 +19,9 @@ type createOrgRequest struct {
 	Plan string `json:"plan"`
 }
 
+// validPlans is the allowlist of accepted plan values.
+var validPlans = map[string]bool{"free": true, "pro": true, "enterprise": true}
+
 // handleCreateOrg creates a new organization and provisions its schema.
 func (s *Server) handleCreateOrg(w http.ResponseWriter, r *http.Request) {
 	var req createOrgRequest
@@ -26,8 +30,13 @@ func (s *Server) handleCreateOrg(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	req.Name = strings.TrimSpace(req.Name)
 	if req.Name == "" {
 		writeError(w, http.StatusBadRequest, "name is required")
+		return
+	}
+	if len(req.Name) > 100 {
+		writeError(w, http.StatusBadRequest, "name must be 100 characters or fewer")
 		return
 	}
 
@@ -40,9 +49,30 @@ func (s *Server) handleCreateOrg(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Check reserved slugs early with a user-friendly error
+	if store.IsReservedSlug(slug) {
+		writeError(w, http.StatusConflict, "this slug is reserved and cannot be used")
+		return
+	}
+
+	// Check if slug is already taken
+	existing, err := s.common.GetOrgBySlug(r.Context(), slug)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to check slug availability")
+		return
+	}
+	if existing != nil {
+		writeError(w, http.StatusConflict, "an organization with this slug already exists")
+		return
+	}
+
 	plan := req.Plan
 	if plan == "" {
 		plan = "free"
+	}
+	if !validPlans[plan] {
+		writeError(w, http.StatusBadRequest, "invalid plan: must be free, pro, or enterprise")
+		return
 	}
 
 	org := &models.Organization{
@@ -52,7 +82,7 @@ func (s *Server) handleCreateOrg(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := s.common.CreateOrganization(r.Context(), org); err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to create organization: "+err.Error())
+		writeError(w, http.StatusInternalServerError, "failed to create organization")
 		return
 	}
 

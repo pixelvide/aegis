@@ -33,13 +33,27 @@ export function OrgProvider({ children }: { children: React.ReactNode }) {
   const [baseDomain, setBaseDomain] = useState("")
 
   const selectOrg = useCallback((orgList: Organization[], domain: string) => {
-    const savedSlug = localStorage.getItem(ORG_STORAGE_KEY)
-    const saved = orgList.find(o => o.slug === savedSlug)
-    const selected = saved || orgList[0] || null
+    let selected: Organization | null = null
+
+    // When base_domain is set, derive active org from the current subdomain
+    if (domain) {
+      const hostname = window.location.hostname
+      if (hostname.endsWith(`.${domain}`)) {
+        const subdomainSlug = hostname.slice(0, -(domain.length + 1))
+        selected = orgList.find(o => o.slug === subdomainSlug) || null
+      }
+    }
+
+    // Fallback: use localStorage (dev mode / base domain without subdomain)
+    if (!selected) {
+      const savedSlug = localStorage.getItem(ORG_STORAGE_KEY)
+      selected = orgList.find(o => o.slug === savedSlug) || orgList[0] || null
+    }
 
     if (selected) {
       setCurrentOrgState(selected)
       setCurrentOrg(selected.slug, selected.id)
+      localStorage.setItem(ORG_STORAGE_KEY, selected.slug)
     }
 
     setBaseDomain(domain)

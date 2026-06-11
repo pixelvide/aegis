@@ -86,14 +86,20 @@ export const orgsApi = {
       headers: { "Content-Type": "application/json" },
     }).then(r => r.json()) as Promise<Organization>
   },
-  create: (data: { name: string; slug: string; plan?: string }) => {
-    return fetch(`${BASE}/orgs`, {
+  create: async (data: { name: string; slug?: string; plan?: string }): Promise<Organization> => {
+    const res = await fetch(`${BASE}/orgs`, {
       method: "POST",
       credentials: "include",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(data),
-    }).then(r => r.json()) as Promise<Organization>
+    })
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({ error: "Failed to create organization" }))
+      throw new Error(body.error || `Request failed: ${res.status}`)
+    }
+    return res.json()
   },
+
 }
 
 // ─── Scans (tenant-scoped) ──────────────────────────────────────────────────

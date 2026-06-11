@@ -1,3 +1,4 @@
+import { useState } from "react"
 import { ChevronsUpDown, Check, Plus, Building2 } from "lucide-react"
 import {
   DropdownMenu,
@@ -13,10 +14,18 @@ import {
   useSidebar,
 } from "@/components/ui/sidebar"
 import { useOrg } from "@/lib/org-context"
+import { CreateOrgDialog } from "@/components/create-org-dialog"
+import type { Organization } from "@/lib/types"
 
 export function OrgSwitcher() {
   const { isMobile } = useSidebar()
-  const { orgs, currentOrg, switchOrg, loading } = useOrg()
+  const { orgs, currentOrg, switchOrg, loading, refresh } = useOrg()
+  const [createDialogOpen, setCreateDialogOpen] = useState(false)
+
+  const handleOrgCreated = (org: Organization) => {
+    refresh()
+    switchOrg(org)
+  }
 
   if (loading) {
     return (
@@ -32,74 +41,99 @@ export function OrgSwitcher() {
 
   if (!currentOrg) {
     return (
-      <SidebarMenuButton size="lg" id="org-project-switcher">
-        <div className="flex size-8 items-center justify-center rounded-lg bg-muted">
-          <Building2 className="h-4 w-4 text-muted-foreground" />
-        </div>
-        <div className="grid flex-1 text-left text-sm leading-tight">
-          <span className="truncate font-semibold text-muted-foreground">No Organization</span>
-          <span className="truncate text-xs text-muted-foreground">Create one to get started</span>
-        </div>
-      </SidebarMenuButton>
+      <>
+        <SidebarMenuButton
+          size="lg"
+          id="org-project-switcher"
+          onClick={() => setCreateDialogOpen(true)}
+        >
+          <div className="flex size-8 items-center justify-center rounded-lg bg-muted">
+            <Building2 className="h-4 w-4 text-muted-foreground" />
+          </div>
+          <div className="grid flex-1 text-left text-sm leading-tight">
+            <span className="truncate font-semibold text-muted-foreground">No Organization</span>
+            <span className="truncate text-xs text-muted-foreground">Click to create one</span>
+          </div>
+        </SidebarMenuButton>
+
+        <CreateOrgDialog
+          open={createDialogOpen}
+          onOpenChange={setCreateDialogOpen}
+          onCreated={handleOrgCreated}
+        />
+      </>
     )
   }
 
   const avatar = currentOrg.name.charAt(0).toUpperCase()
 
   return (
-    <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <SidebarMenuButton
-          size="lg"
-          className="data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground"
-          id="org-project-switcher"
+    <>
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <SidebarMenuButton
+            size="lg"
+            className="data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground"
+            id="org-project-switcher"
+          >
+            <div className="flex size-8 items-center justify-center rounded-lg bg-sidebar-primary text-sidebar-primary-foreground">
+              <span className="text-xs font-semibold">{avatar}</span>
+            </div>
+            <div className="grid flex-1 text-left text-sm leading-tight">
+              <span className="truncate font-semibold">{currentOrg.name}</span>
+              <span className="truncate text-xs text-muted-foreground capitalize">{currentOrg.plan}</span>
+            </div>
+            <ChevronsUpDown className="ml-auto" />
+          </SidebarMenuButton>
+        </DropdownMenuTrigger>
+
+        <DropdownMenuContent
+          className="w-[--radix-dropdown-menu-trigger-width] min-w-64 rounded-lg"
+          align="start"
+          side={isMobile ? "bottom" : "right"}
+          sideOffset={4}
         >
-          <div className="flex size-8 items-center justify-center rounded-lg bg-sidebar-primary text-sidebar-primary-foreground">
-            <span className="text-xs font-semibold">{avatar}</span>
-          </div>
-          <div className="grid flex-1 text-left text-sm leading-tight">
-            <span className="truncate font-semibold">{currentOrg.name}</span>
-            <span className="truncate text-xs text-muted-foreground capitalize">{currentOrg.plan}</span>
-          </div>
-          <ChevronsUpDown className="ml-auto" />
-        </SidebarMenuButton>
-      </DropdownMenuTrigger>
+          <DropdownMenuLabel className="text-xs text-muted-foreground flex items-center justify-between">
+            <span>Organizations</span>
+            <span className="font-normal tabular-nums">{orgs.length}</span>
+          </DropdownMenuLabel>
 
-      <DropdownMenuContent
-        className="w-[--radix-dropdown-menu-trigger-width] min-w-64 rounded-lg"
-        align="start"
-        side={isMobile ? "bottom" : "right"}
-        sideOffset={4}
-      >
-        <DropdownMenuLabel className="text-xs text-muted-foreground flex items-center justify-between">
-          <span>Organizations</span>
-          <span className="font-normal tabular-nums">{orgs.length}</span>
-        </DropdownMenuLabel>
+          <DropdownMenuGroup>
+            {orgs.map((org) => (
+              <DropdownMenuItem
+                key={org.id}
+                onClick={() => switchOrg(org)}
+                className="gap-2 p-2"
+              >
+                <div className="flex size-6 items-center justify-center rounded-sm border bg-background">
+                  <span className="text-xs font-medium">{org.name.charAt(0).toUpperCase()}</span>
+                </div>
+                <span className="flex-1">{org.name}</span>
+                <span className="text-xs text-muted-foreground capitalize">{org.plan}</span>
+                {org.id === currentOrg.id && <Check className="h-4 w-4 text-foreground" />}
+              </DropdownMenuItem>
+            ))}
+          </DropdownMenuGroup>
 
-        <DropdownMenuGroup>
-          {orgs.map((org) => (
-            <DropdownMenuItem
-              key={org.id}
-              onClick={() => switchOrg(org)}
-              className="gap-2 p-2"
-            >
-              <div className="flex size-6 items-center justify-center rounded-sm border bg-background">
-                <span className="text-xs font-medium">{org.name.charAt(0).toUpperCase()}</span>
-              </div>
-              <span className="flex-1">{org.name}</span>
-              <span className="text-xs text-muted-foreground capitalize">{org.plan}</span>
-              {org.id === currentOrg.id && <Check className="h-4 w-4 text-foreground" />}
-            </DropdownMenuItem>
-          ))}
-        </DropdownMenuGroup>
+          <DropdownMenuSeparator />
 
-        <DropdownMenuSeparator />
+          <DropdownMenuItem
+            className="gap-2 p-2"
+            onClick={() => setCreateDialogOpen(true)}
+            id="create-org-menu-item"
+          >
+            <Plus className="h-4 w-4" />
+            Create Organization
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
 
-        <DropdownMenuItem className="gap-2 p-2">
-          <Plus className="h-4 w-4" />
-          Create Organization
-        </DropdownMenuItem>
-      </DropdownMenuContent>
-    </DropdownMenu>
+      <CreateOrgDialog
+        open={createDialogOpen}
+        onOpenChange={setCreateDialogOpen}
+        onCreated={handleOrgCreated}
+      />
+    </>
   )
 }
+
