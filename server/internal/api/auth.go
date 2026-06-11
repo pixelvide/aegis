@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/mail"
 	"strings"
@@ -13,6 +14,8 @@ import (
 	"unicode"
 
 	authpkg "github.com/pixelvide/aegis/server/internal/auth"
+	"github.com/pixelvide/aegis/server/internal/config"
+	"github.com/pixelvide/aegis/server/internal/email/templates"
 	"github.com/pixelvide/aegis/server/internal/middleware"
 	"github.com/pixelvide/aegis/server/internal/models"
 	"github.com/pixelvide/aegis/server/internal/store"
@@ -88,9 +91,11 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 		PasswordHash: hash,
 	}
 	if err := s.common.CreateUser(r.Context(), user); err != nil {
+		slog.Error("failed to create user", "email", req.Email, "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to create user")
 		return
 	}
+	slog.Info("user registered", "user_id", user.ID, "email", req.Email)
 
 	// Create primary email entry + send verification
 	primaryEmail, err := s.common.AddPrimaryUserEmail(r.Context(), user.ID, req.Email)
@@ -128,7 +133,7 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.createSession(r, user.ID, jti)
-	setAuthCookie(w, token)
+	setAuthCookie(w, token, s.config)
 
 	writeJSON(w, http.StatusCreated, map[string]any{
 		"user":    user,
@@ -215,7 +220,7 @@ issueToken:
 	}
 
 	s.createSession(r, user.ID, jti)
-	setAuthCookie(w, token)
+	setAuthCookie(w, token, s.config)
 
 	// Send login notification email
 	ip := extractIP(r)
@@ -242,6 +247,7 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 		SameSite: http.SameSiteLaxMode,
 		Path:     "/",
 		MaxAge:   -1, // delete immediately
+		Domain:   cookieDomain(s.config),
 	})
 	writeJSON(w, http.StatusOK, map[string]string{"message": "logged out"})
 }
@@ -270,16 +276,30 @@ func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
-func setAuthCookie(w http.ResponseWriter, token string) {
+func setAuthCookie(w http.ResponseWriter, token string, cfg *config.Config) {
 	http.SetCookie(w, &http.Cookie{
 		Name:     middleware.CookieName,
 		Value:    token,
 		HttpOnly: true,
-		// Secure: true, // enable in production with HTTPS
 		SameSite: http.SameSiteLaxMode,
 		Path:     "/",
 		MaxAge:   86400, // 24 hours
+		// When BaseDomain is set, scope cookie to parent domain for cross-subdomain sharing
+		Domain: cookieDomain(cfg),
+		// TODO(security): Enable Secure: true in production with HTTPS
+		// TODO(security): Consider __Secure- cookie prefix when Secure is enabled
 	})
+}
+
+// cookieDomain returns the domain to set on auth cookies.
+// When BaseDomain is set, returns ".aegis.io" (leading dot) so the cookie
+// is shared across all subdomains. When empty, returns "" (browser defaults
+// to the exact host — standard dev mode behavior).
+func cookieDomain(cfg *config.Config) string {
+	if cfg.BaseDomain != "" {
+		return "." + cfg.BaseDomain
+	}
+	return ""
 }
 
 // createSession creates a session row for the given user and JTI.
@@ -373,24 +393,12 @@ func parseUserAgent(ua string) (browser, os, deviceType string) {
 }
 
 // sendLoginNotification sends an email alert about a new login.
-func (s *Server) sendLoginNotification(email, name, ip, browser, os, deviceType string) {
+func (s *Server) sendLoginNotification(emailAddr, name, ip, browser, os, deviceType string) {
 	loginTime := time.Now().UTC().Format("Jan 02, 2006 at 15:04 UTC")
-	subject := "Aegis — New sign-in to your account"
-	body := fmt.Sprintf(`<h2>New Sign-In Detected</h2>
-<p>Hi %s,</p>
-<p>We noticed a new sign-in to your Aegis account:</p>
-<table style="border-collapse:collapse;margin:16px 0;">
-  <tr><td style="padding:4px 16px 4px 0;color:#666;">Browser</td><td style="padding:4px 0;">%s</td></tr>
-  <tr><td style="padding:4px 16px 4px 0;color:#666;">Operating System</td><td style="padding:4px 0;">%s</td></tr>
-  <tr><td style="padding:4px 16px 4px 0;color:#666;">Device</td><td style="padding:4px 0;">%s</td></tr>
-  <tr><td style="padding:4px 16px 4px 0;color:#666;">IP Address</td><td style="padding:4px 0;">%s</td></tr>
-  <tr><td style="padding:4px 16px 4px 0;color:#666;">Time</td><td style="padding:4px 0;">%s</td></tr>
-</table>
-<p>If this was you, no action is needed.</p>
-<p>If you don't recognize this activity, please <strong>change your password immediately</strong> and review your active sessions.</p>
-<p style="color:#666;font-size:12px;">Aegis Security Platform</p>
-`, name, browser, os, deviceType, ip, loginTime)
-	_ = s.email.Send(email, subject, body)
+	subject, body := templates.LoginAlert(name, ip, browser, os, deviceType, loginTime)
+	if err := s.email.Send(emailAddr, subject, body); err != nil {
+		slog.Error("failed to send login notification email", "email", emailAddr, "error", err)
+	}
 }
 
 // maskEmail masks an email for privacy (e.g., "j***@example.com").
@@ -435,6 +443,7 @@ func (s *Server) sendVerificationEmail(userID, emailID, emailAddr string) {
 
 	tokenBytes := make([]byte, 32)
 	if _, err := rand.Read(tokenBytes); err != nil {
+		slog.Error("failed to generate verification token", "user_id", userID, "email", emailAddr, "error", err)
 		return
 	}
 	token := hex.EncodeToString(tokenBytes)
@@ -442,12 +451,14 @@ func (s *Server) sendVerificationEmail(userID, emailID, emailAddr string) {
 	expiresAt := time.Now().UTC().Add(24 * time.Hour)
 
 	if err := s.common.CreatePasswordResetToken(ctx, userID, tokenHash, expiresAt); err != nil {
+		slog.Error("failed to create verification token", "user_id", userID, "email", emailAddr, "error", err)
 		return
 	}
 
 	verifyURL := fmt.Sprintf("%s/verify-email?token=%s&email_id=%s", s.config.BaseURL, token, emailID)
-	subject := "Verify your email address"
-	body := fmt.Sprintf("Click the following link to verify your email:\n\n%s\n\nThis link expires in 24 hours.", verifyURL)
+	subject, body := templates.VerifyEmail(verifyURL)
 
-	_ = s.email.Send(emailAddr, subject, body)
+	if err := s.email.Send(emailAddr, subject, body); err != nil {
+		slog.Error("failed to send verification email", "user_id", userID, "email", emailAddr, "error", err)
+	}
 }

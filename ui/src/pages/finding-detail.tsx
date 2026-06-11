@@ -181,6 +181,31 @@ export default function FindingDetailPage() {
                   <Separator />
                 </>
               )}
+              {finding.cve && (
+                <>
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">CVE</span>
+                    <span className="font-mono text-xs">{finding.cve}</span>
+                  </div>
+                  <Separator />
+                </>
+              )}
+              {finding.cvss_score != null && finding.cvss_score > 0 && (
+                <>
+                  <div className="flex justify-between items-center">
+                    <span className="text-muted-foreground">CVSS</span>
+                    <span className={`font-mono text-xs font-medium ${
+                      finding.cvss_score >= 9.0 ? "text-red-600" :
+                      finding.cvss_score >= 7.0 ? "text-orange-600" :
+                      finding.cvss_score >= 4.0 ? "text-amber-600" :
+                      "text-blue-600"
+                    }`}>
+                      {finding.cvss_score.toFixed(1)}
+                    </span>
+                  </div>
+                  <Separator />
+                </>
+              )}
               {finding.file && (
                 <>
                   <div>
@@ -189,6 +214,24 @@ export default function FindingDetailPage() {
                     {finding.line ? (
                       <span className="text-muted-foreground"> :L{finding.line}</span>
                     ) : null}
+                  </div>
+                  <Separator />
+                </>
+              )}
+              {finding.seen_count > 1 && (
+                <>
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Seen</span>
+                    <span className="text-xs">{finding.seen_count} times</span>
+                  </div>
+                  <Separator />
+                </>
+              )}
+              {finding.last_seen_at && finding.last_seen_at !== finding.created_at && (
+                <>
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Last Seen</span>
+                    <span className="text-xs">{formatDate(finding.last_seen_at)}</span>
                   </div>
                   <Separator />
                 </>

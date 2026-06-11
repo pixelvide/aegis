@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"log/slog"
 	"os"
 	"time"
 
@@ -30,7 +31,7 @@ func New() (*Service, error) {
 			return nil, fmt.Errorf("generate jwt secret: %w", err)
 		}
 		secret = hex.EncodeToString(b)
-		fmt.Println("⚠️  JWT_SECRET not set — generated ephemeral secret (sessions won't survive restart)")
+		slog.Warn("JWT_SECRET not set, using ephemeral secret — sessions won't survive restart")
 	}
 
 	return &Service{

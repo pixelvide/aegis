@@ -3,7 +3,8 @@
 
 import type {
   Scan, Finding, Exploit, DashboardStats, CreateScanRequest,
-  FindingStatus, Organization, Member, OrgRole, Project
+  FindingStatus, Organization, Member, OrgRole, Project,
+  APIToken, CreateTokenResponse,
 } from "./types"
 
 const BASE = "/api/v1"
@@ -63,6 +64,11 @@ export async function request<T>(path: string, options?: RequestInit): Promise<T
 
 // ─── Organizations (no tenant context needed) ───────────────────────────────
 
+export interface OrgsListResponse {
+  orgs: Organization[]
+  base_domain: string
+}
+
 export const orgsApi = {
   list: () => {
     // Org endpoints don't need X-Org-* headers, so use a clean fetch
@@ -72,7 +78,7 @@ export const orgsApi = {
     }).then(r => {
       if (!r.ok) throw new Error("Failed to list orgs")
       return r.json()
-    }) as Promise<Organization[]>
+    }) as Promise<OrgsListResponse>
   },
   get: (slug: string) => {
     return fetch(`${BASE}/orgs/${encodeURIComponent(slug)}`, {
@@ -106,9 +112,10 @@ export const scansApi = {
 // ─── Findings (tenant-scoped) ───────────────────────────────────────────────
 
 export const findingsApi = {
-  list: (params?: { scan_id?: string; severity?: string; status?: string; cwe?: string }) => {
+  list: (params?: { scan_id?: string; project_id?: string; severity?: string; status?: string; cwe?: string }) => {
     const qs = new URLSearchParams()
     if (params?.scan_id) qs.set("scan_id", params.scan_id)
+    if (params?.project_id) qs.set("project_id", params.project_id)
     if (params?.severity) qs.set("severity", params.severity)
     if (params?.status) qs.set("status", params.status)
     if (params?.cwe) qs.set("cwe", params.cwe)
@@ -156,3 +163,14 @@ export const projectsApi = {
     request<Project>("/projects", { method: "POST", body: JSON.stringify(data) }),
   get: (slug: string) => request<Project>(`/projects/${encodeURIComponent(slug)}`),
 }
+
+// ─── Tokens (tenant-scoped) ─────────────────────────────────────────────────
+
+export const tokensApi = {
+  list: () => request<APIToken[]>("/tokens"),
+  create: (data: { name: string; project_id?: string; expires_in?: number }) =>
+    request<CreateTokenResponse>("/tokens", { method: "POST", body: JSON.stringify(data) }),
+  revoke: (id: string) =>
+    request<void>(`/tokens/${encodeURIComponent(id)}`, { method: "DELETE" }),
+}
+

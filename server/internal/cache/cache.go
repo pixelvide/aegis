@@ -8,7 +8,7 @@ package cache
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -70,7 +70,7 @@ func (c *Client) MarkSessionActive(ctx context.Context, jti string) {
 		return
 	}
 	if err := c.rdb.Set(ctx, sessionKey(jti), "1", SessionTTL).Err(); err != nil {
-		log.Printf("cache: failed to mark session active: %v", err)
+		slog.Error("cache: failed to mark session active", "error", err, "jti", jti)
 	}
 }
 
@@ -85,7 +85,7 @@ func (c *Client) MarkSessionRevoked(ctx context.Context, jti string) {
 	pipe.Del(ctx, sessionKey(jti))
 	pipe.Set(ctx, revokedKey(jti), "1", 24*time.Hour)
 	if _, err := pipe.Exec(ctx); err != nil {
-		log.Printf("cache: failed to mark session revoked: %v", err)
+		slog.Error("cache: failed to mark session revoked", "error", err, "jti", jti)
 	}
 }
 
@@ -124,6 +124,6 @@ func (c *Client) InvalidateUserSessions(ctx context.Context, jtis []string) {
 		keys = append(keys, sessionKey(jti), revokedKey(jti))
 	}
 	if err := c.rdb.Del(ctx, keys...).Err(); err != nil {
-		log.Printf("cache: failed to invalidate user sessions: %v", err)
+		slog.Error("cache: failed to invalidate user sessions", "error", err, "count", len(jtis))
 	}
 }

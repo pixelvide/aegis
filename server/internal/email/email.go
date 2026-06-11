@@ -7,7 +7,7 @@ package email
 import (
 	"crypto/tls"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/smtp"
 	"strings"
 
@@ -36,9 +36,9 @@ func New(cfg config.SMTPConfig) *Service {
 	}
 
 	if s.username == "" {
-		log.Println("📧 SMTP auth disabled (MailDev mode) — emails will appear at http://localhost:1080")
+		slog.Info("SMTP auth disabled (MailDev mode)", "web_ui", "http://localhost:1080", "component", "email")
 	} else {
-		log.Printf("📧 SMTP configured: %s:%d (TLS=%v)", s.host, s.port, s.useTLS)
+		slog.Info("SMTP configured", "host", s.host, "port", s.port, "tls", s.useTLS, "component", "email")
 	}
 
 	return s
@@ -57,10 +57,20 @@ func (s *Service) Send(to, subject, htmlBody string) error {
 	}
 
 	if s.useTLS {
-		return s.sendWithTLS(addr, auth, msg, to)
+		if err := s.sendWithTLS(addr, auth, msg, to); err != nil {
+			slog.Error("email send failed", "to", to, "subject", subject, "error", err, "tls", true, "component", "email")
+			return err
+		}
+		slog.Debug("email sent", "to", to, "subject", subject, "tls", true, "component", "email")
+		return nil
 	}
 
-	return smtp.SendMail(addr, auth, s.from, []string{to}, msg)
+	if err := smtp.SendMail(addr, auth, s.from, []string{to}, msg); err != nil {
+		slog.Error("email send failed", "to", to, "subject", subject, "error", err, "tls", false, "component", "email")
+		return err
+	}
+	slog.Debug("email sent", "to", to, "subject", subject, "tls", false, "component", "email")
+	return nil
 }
 
 // sendWithTLS connects with STARTTLS for production SMTP providers.

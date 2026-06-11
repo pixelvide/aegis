@@ -13,7 +13,7 @@ package main
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
@@ -25,12 +25,14 @@ import (
 	"github.com/pixelvide/aegis/server/internal/cache"
 	"github.com/pixelvide/aegis/server/internal/config"
 	"github.com/pixelvide/aegis/server/internal/email"
+	"github.com/pixelvide/aegis/server/internal/logger"
 	"github.com/pixelvide/aegis/server/internal/store"
 )
 
 func main() {
 	if err := run(); err != nil {
-		log.Fatalf("aegis-server: %v", err)
+		slog.Error("server fatal error", "error", err)
+		os.Exit(1)
 	}
 }
 
@@ -39,6 +41,10 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("config: %w", err)
 	}
+
+	// Initialize structured logger first — all subsequent code uses slog
+	logger.Init(cfg.LogLevel, cfg.LogFormat)
+	slog.Info("configuration loaded", "log_level", cfg.LogLevel, "log_format", cfg.LogFormat)
 
 	// Open PostgreSQL connection pool
 	if cfg.DatabaseURL == "" {
@@ -50,21 +56,21 @@ func run() error {
 		return fmt.Errorf("postgres: %w", err)
 	}
 	defer db.Close()
-	log.Printf("📦 Connected to PostgreSQL")
+	slog.Info("connected to PostgreSQL", "component", "database")
 
 	// Initialize common schema (users, orgs, memberships)
 	common, err := store.NewCommonStore(db)
 	if err != nil {
 		return fmt.Errorf("common store: %w", err)
 	}
-	log.Printf("📋 Common schema ready")
+	slog.Info("common schema ready", "component", "store")
 
 	// Initialize auth service (JWT + password hashing)
 	authSvc, err := auth.New()
 	if err != nil {
 		return fmt.Errorf("auth: %w", err)
 	}
-	log.Printf("🔐 Auth service ready")
+	slog.Info("auth service ready", "component", "auth")
 
 	// Initialize email service (SMTP)
 	emailSvc := email.New(cfg.SMTP)
@@ -74,20 +80,21 @@ func run() error {
 	if cfg.ValkeyURL != "" {
 		cacheClient, err = cache.New(cfg.ValkeyURL)
 		if err != nil {
-			log.Printf("⚠️  Valkey unavailable (%v) — falling back to DB-only session checks", err)
+			slog.Warn("valkey unavailable, falling back to DB-only session checks",
+				"error", err, "component", "cache")
 			cacheClient = nil
 		} else {
 			defer cacheClient.Close()
-			log.Printf("⚡ Valkey connected (%s)", cfg.ValkeyURL)
+			slog.Info("valkey connected", "addr", cfg.ValkeyURL, "component", "cache")
 		}
 	} else {
-		log.Printf("⚡ Valkey not configured — using DB-only session checks")
+		slog.Info("valkey not configured, using DB-only session checks", "component", "cache")
 	}
 
 	// Initialize OTel metrics with Prometheus exporter
 	metrics, metricsHandler, metricsShutdown := api.InitMetrics(db)
 	defer metricsShutdown(context.Background())
-	log.Printf("📊 Metrics ready (Prometheus at /metrics)")
+	slog.Info("metrics ready", "endpoint", "/metrics", "component", "otel")
 
 	// Create API server
 	apiSrv := api.New(common, authSvc, emailSvc, cacheClient, cfg)
@@ -103,8 +110,9 @@ func run() error {
 	mux.Handle("GET /metrics", metricsHandler)
 	mux.Handle("/", uiHandler())
 
-	// Wrap with metrics middleware
-	handler := metrics.Middleware(mux)
+	// Wrap with auth page redirect (302 for /login etc. on non-base-domain)
+	// then metrics middleware
+	handler := metrics.Middleware(api.AuthPageRedirect(cfg)(mux))
 
 	// HTTP server
 	httpServer := &http.Server{
@@ -120,7 +128,7 @@ func run() error {
 	// Graceful shutdown
 	errCh := make(chan error, 1)
 	go func() {
-		log.Printf("🛡️  Aegis server listening on %s", cfg.Addr())
+		slog.Info("server listening", "addr", cfg.Addr())
 		errCh <- httpServer.ListenAndServe()
 	}()
 
@@ -129,7 +137,7 @@ func run() error {
 
 	select {
 	case sig := <-quit:
-		log.Printf("Received %s, shutting down...", sig)
+		slog.Info("received signal, shutting down", "signal", sig.String())
 	case err := <-errCh:
 		return err
 	}

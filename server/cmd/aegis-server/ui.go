@@ -3,8 +3,9 @@ package main
 import (
 	"embed"
 	"io/fs"
-	"log"
+	"log/slog"
 	"net/http"
+	"os"
 	"strings"
 )
 
@@ -18,7 +19,8 @@ func uiHandler() http.Handler {
 	// Strip the "ui" prefix from the embedded filesystem
 	sub, err := fs.Sub(uiFS, "ui")
 	if err != nil {
-		log.Fatalf("ui embed: %v", err)
+		slog.Error("ui embed failed", "error", err)
+		os.Exit(1)
 	}
 
 	fileServer := http.FileServer(http.FS(sub))

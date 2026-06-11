@@ -15,6 +15,7 @@ import {
   User,
   Bell,
   ChevronsUpDown,
+  FolderKanban,
 } from "lucide-react"
 import {
   Sidebar,
@@ -38,13 +39,14 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-import { OrgProjectSwitcher } from "@/components/org-project-switcher"
+import { OrgSwitcher } from "@/components/org-switcher"
 import { useAuth } from "@/lib/auth-context"
 
 const mainNav = [
   { to: "/", icon: LayoutDashboard, label: "Dashboard" },
   { to: "/scans", icon: Search, label: "Scans" },
   { to: "/findings", icon: Bug, label: "Findings" },
+  { to: "/projects", icon: FolderKanban, label: "Projects" },
   { to: "/agents", icon: Bot, label: "Agents" },
 ]
 
@@ -86,7 +88,7 @@ export function AppSidebar() {
       <SidebarHeader>
         <SidebarMenu>
           <SidebarMenuItem>
-            <OrgProjectSwitcher />
+            <OrgSwitcher />
           </SidebarMenuItem>
         </SidebarMenu>
       </SidebarHeader>

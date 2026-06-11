@@ -5,12 +5,14 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/mail"
 	"strings"
 	"time"
 
 	authpkg "github.com/pixelvide/aegis/server/internal/auth"
+	"github.com/pixelvide/aegis/server/internal/email/templates"
 	"github.com/pixelvide/aegis/server/internal/middleware"
 )
 
@@ -71,23 +73,14 @@ func (s *Server) handleForgotPassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Send reset email
+	// Send reset email — BaseURL (from APP_BASE_URL) always points to the base domain
 	resetURL := fmt.Sprintf("%s/reset-password?token=%s", s.config.BaseURL, rawToken)
-	if s.config.BaseDomain != "" {
-		resetURL = fmt.Sprintf("https://%s/reset-password?token=%s", s.config.BaseDomain, rawToken)
-	}
 
-	htmlBody := fmt.Sprintf(`
-		<h2>Password Reset</h2>
-		<p>You requested a password reset for your Aegis account.</p>
-		<p><a href="%s" style="display:inline-block;padding:10px 24px;background:#171717;color:#fff;text-decoration:none;border-radius:4px;">Reset Password</a></p>
-		<p>This link expires in 1 hour. If you didn't request this, you can safely ignore this email.</p>
-		<p style="color:#666;font-size:12px;">Aegis Security Platform</p>
-	`, resetURL)
+	subject, htmlBody := templates.PasswordReset(resetURL)
 
-	if err := s.email.Send(user.Email, "Aegis — Password Reset", htmlBody); err != nil {
+	if err := s.email.Send(user.Email, subject, htmlBody); err != nil {
 		// Log error but don't reveal it to the user (email enumeration)
-		fmt.Printf("Failed to send password reset email to %s: %v\n", user.Email, err)
+		slog.Error("failed to send password reset email", "email", user.Email, "error", err)
 	}
 
 	writeJSON(w, http.StatusOK, successMsg)
@@ -211,13 +204,9 @@ func hashToken(raw string) string {
 }
 
 // sendPasswordChangedNotification sends a security alert email when a password is changed.
-func (s *Server) sendPasswordChangedNotification(email, name string) {
-	subject := "Aegis — Your password was changed"
-	body := fmt.Sprintf(`<h2>Password Changed</h2>
-<p>Hi %s,</p>
-<p>Your Aegis account password was just changed. If you made this change, no further action is needed.</p>
-<p>If you did <strong>not</strong> change your password, please reset it immediately and contact support.</p>
-<p style="color:#666;font-size:12px;">Aegis Security Platform</p>
-`, name)
-	_ = s.email.Send(email, subject, body)
+func (s *Server) sendPasswordChangedNotification(emailAddr, name string) {
+	subject, body := templates.PasswordChanged(name)
+	if err := s.email.Send(emailAddr, subject, body); err != nil {
+		slog.Error("failed to send password changed notification", "email", emailAddr, "error", err)
+	}
 }

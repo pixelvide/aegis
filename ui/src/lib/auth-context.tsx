@@ -49,6 +49,33 @@ export function useAuth() {
   return useContext(AuthContext)
 }
 
+// getValidReturnTo extracts and validates the ?return_to= query parameter.
+// Only allows URLs that share the same base domain to prevent open redirect attacks.
+// Returns the validated URL string, or null if invalid/missing.
+function getValidReturnTo(): string | null {
+  const params = new URLSearchParams(window.location.search)
+  const returnTo = params.get("return_to")
+  if (!returnTo) return null
+
+  try {
+    const url = new URL(returnTo)
+    const currentHost = window.location.hostname
+
+    // Allow same host or subdomains of the current host
+    // e.g., if we're on aegis.io, allow acme.aegis.io
+    if (url.hostname === currentHost || url.hostname.endsWith("." + currentHost)) {
+      // Only allow http/https protocols
+      if (url.protocol === "http:" || url.protocol === "https:") {
+        return returnTo
+      }
+    }
+  } catch {
+    // Invalid URL — ignore
+  }
+
+  return null
+}
+
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null)
   const [loading, setLoading] = useState(true)
@@ -99,7 +126,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
 
     setUser(data.user)
-    navigate("/", { replace: true })
+
+    // If there's a validated return_to param, redirect back to that subdomain
+    const returnTo = getValidReturnTo()
+    if (returnTo) {
+      window.location.href = returnTo
+    } else {
+      navigate("/", { replace: true })
+    }
   }, [navigate])
 
   const register = useCallback(async (email: string, password: string, name: string) => {
@@ -115,7 +149,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
     const data = await res.json()
     setUser(data.user)
-    navigate("/", { replace: true })
+
+    // If there's a validated return_to param, redirect back
+    const returnTo = getValidReturnTo()
+    if (returnTo) {
+      window.location.href = returnTo
+    } else {
+      navigate("/", { replace: true })
+    }
   }, [navigate])
 
   const logout = useCallback(async () => {

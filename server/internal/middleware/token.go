@@ -66,6 +66,7 @@ func TokenAuth(common *store.CommonStore, cfg *config.Config) func(http.Handler)
 			// 2. Resolve org from subdomain or header
 			var org *models.Organization
 			var err error
+			var resolvedFromDomain bool
 
 			// Try subdomain first (production)
 			if cfg.BaseDomain != "" {
@@ -77,15 +78,7 @@ func TokenAuth(common *store.CommonStore, cfg *config.Config) func(http.Handler)
 				subdomain := extractSubdomain(host, cfg.BaseDomain)
 				if subdomain != "" {
 					org, err = common.GetOrgBySlug(r.Context(), subdomain)
-				}
-			}
-
-			// Fallback to X-Org-Slug or X-Org-ID headers (dev mode)
-			if org == nil && err == nil {
-				if orgID := r.Header.Get("X-Org-ID"); orgID != "" {
-					org, err = common.GetOrganization(r.Context(), orgID)
-				} else if slug := r.Header.Get("X-Org-Slug"); slug != "" {
-					org, err = common.GetOrgBySlug(r.Context(), slug)
+					resolvedFromDomain = true
 				}
 			}
 
@@ -97,6 +90,30 @@ func TokenAuth(common *store.CommonStore, cfg *config.Config) func(http.Handler)
 				}
 				if !strings.HasSuffix(host, cfg.BaseDomain) {
 					org, err = common.GetOrgByDomain(r.Context(), host)
+					if org != nil {
+						resolvedFromDomain = true
+					}
+				}
+			}
+
+			// If domain resolved the org, reject conflicting headers
+			if resolvedFromDomain && org != nil {
+				if headerID := r.Header.Get("X-Org-ID"); headerID != "" && headerID != org.ID {
+					http.Error(w, `{"error":"X-Org-ID header conflicts with subdomain"}`, http.StatusBadRequest)
+					return
+				}
+				if headerSlug := r.Header.Get("X-Org-Slug"); headerSlug != "" && headerSlug != org.Slug {
+					http.Error(w, `{"error":"X-Org-Slug header conflicts with subdomain"}`, http.StatusBadRequest)
+					return
+				}
+			}
+
+			// Fallback to X-Org-Slug or X-Org-ID headers (dev mode)
+			if org == nil && err == nil {
+				if orgID := r.Header.Get("X-Org-ID"); orgID != "" {
+					org, err = common.GetOrganization(r.Context(), orgID)
+				} else if slug := r.Header.Get("X-Org-Slug"); slug != "" {
+					org, err = common.GetOrgBySlug(r.Context(), slug)
 				}
 			}
 

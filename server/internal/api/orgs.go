@@ -65,7 +65,7 @@ func (s *Server) handleCreateOrg(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, org)
 }
 
-// handleListOrgs returns the current user's organizations.
+// handleListOrgs returns the current user's organizations and app config.
 func (s *Server) handleListOrgs(w http.ResponseWriter, r *http.Request) {
 	user := middleware.UserFromContext(r.Context())
 	if user == nil {
@@ -81,7 +81,10 @@ func (s *Server) handleListOrgs(w http.ResponseWriter, r *http.Request) {
 	if orgs == nil {
 		orgs = []models.Organization{}
 	}
-	writeJSON(w, http.StatusOK, orgs)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"orgs":        orgs,
+		"base_domain": s.config.BaseDomain,
+	})
 }
 
 // handleGetOrg returns an organization by slug.

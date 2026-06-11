@@ -4,7 +4,9 @@ package middleware
 import (
 	"context"
 	"net/http"
+	"strings"
 
+	"github.com/pixelvide/aegis/server/internal/config"
 	"github.com/pixelvide/aegis/server/internal/models"
 	"github.com/pixelvide/aegis/server/internal/store"
 )
@@ -48,21 +50,68 @@ func IsAdminOrOwner(ctx context.Context) bool {
 // a schema-scoped Store into the context.
 //
 // Resolution order:
-//  1. X-Org-ID header (UUID)
-//  2. X-Org-Slug header (slug)
+//  1. Subdomain (if AEGIS_BASE_DOMAIN is set): acme.aegis.io → slug "acme"
+//  2. Custom domain: security.acme.com → lookup in organizations.custom_domain
+//  3. X-Org-ID header (UUID)
+//  4. X-Org-Slug header (slug)
+//
+// When AEGIS_BASE_DOMAIN is set and a subdomain is present, headers are ignored
+// to prevent confused-deputy attacks (user on acme.aegis.io sending X-Org-Slug: other-org).
 //
 // If an authenticated user is in context, verifies org membership.
-func TenantResolver(common *store.CommonStore) func(http.Handler) http.Handler {
+func TenantResolver(common *store.CommonStore, cfg *config.Config) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			var org *models.Organization
 			var err error
+			var resolvedFromDomain bool
 
-			// Try X-Org-ID first, then X-Org-Slug
-			if orgID := r.Header.Get("X-Org-ID"); orgID != "" {
-				org, err = common.GetOrganization(r.Context(), orgID)
-			} else if slug := r.Header.Get("X-Org-Slug"); slug != "" {
-				org, err = common.GetOrgBySlug(r.Context(), slug)
+			// 1. Try subdomain resolution (production mode)
+			if cfg.BaseDomain != "" {
+				host := r.Host
+				if idx := strings.LastIndex(host, ":"); idx != -1 {
+					host = host[:idx]
+				}
+				subdomain := extractSubdomain(host, cfg.BaseDomain)
+				if subdomain != "" {
+					org, err = common.GetOrgBySlug(r.Context(), subdomain)
+					resolvedFromDomain = true
+				}
+			}
+
+			// 2. Try custom domain lookup
+			if org == nil && err == nil && cfg.BaseDomain != "" {
+				host := r.Host
+				if idx := strings.LastIndex(host, ":"); idx != -1 {
+					host = host[:idx]
+				}
+				if !strings.HasSuffix(host, cfg.BaseDomain) {
+					org, err = common.GetOrgByDomain(r.Context(), host)
+					if org != nil {
+						resolvedFromDomain = true
+					}
+				}
+			}
+
+			// 3. If domain resolved the org, reject conflicting headers
+			if resolvedFromDomain && org != nil {
+				if headerID := r.Header.Get("X-Org-ID"); headerID != "" && headerID != org.ID {
+					http.Error(w, `{"error":"X-Org-ID header conflicts with subdomain"}`, http.StatusBadRequest)
+					return
+				}
+				if headerSlug := r.Header.Get("X-Org-Slug"); headerSlug != "" && headerSlug != org.Slug {
+					http.Error(w, `{"error":"X-Org-Slug header conflicts with subdomain"}`, http.StatusBadRequest)
+					return
+				}
+			}
+
+			// 4. Fallback to headers (dev mode, no subdomain)
+			if org == nil && err == nil {
+				if orgID := r.Header.Get("X-Org-ID"); orgID != "" {
+					org, err = common.GetOrganization(r.Context(), orgID)
+				} else if slug := r.Header.Get("X-Org-Slug"); slug != "" {
+					org, err = common.GetOrgBySlug(r.Context(), slug)
+				}
 			}
 
 			if err != nil {
@@ -102,3 +151,4 @@ func TenantResolver(common *store.CommonStore) func(http.Handler) http.Handler {
 		})
 	}
 }
+

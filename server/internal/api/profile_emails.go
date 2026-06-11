@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/pixelvide/aegis/server/internal/email/templates"
 	"github.com/pixelvide/aegis/server/internal/middleware"
 	"github.com/pixelvide/aegis/server/internal/models"
 )
@@ -174,8 +175,7 @@ func (s *Server) handleSendEmailVerification(w http.ResponseWriter, r *http.Requ
 
 	// Send verification email
 	verifyURL := fmt.Sprintf("%s/verify-email?token=%s&email_id=%s", s.config.BaseURL, token, emailID)
-	subject := "Verify your email address"
-	body := fmt.Sprintf("Click the following link to verify your email:\n\n%s\n\nThis link expires in 24 hours.", verifyURL)
+	subject, body := templates.VerifyEmail(verifyURL)
 
 	if err := s.email.Send(emailRecord.Email, subject, body); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to send verification email")

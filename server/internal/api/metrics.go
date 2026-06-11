@@ -3,7 +3,7 @@ package api
 import (
 	"context"
 	"database/sql"
-	"log"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"time"
@@ -31,7 +31,7 @@ func InitMetrics(db *sql.DB) (*Metrics, http.Handler, func(context.Context) erro
 		prometheus.WithNamespace("aegis"),
 	)
 	if err != nil {
-		log.Printf("⚠️  Failed to create Prometheus exporter: %v — metrics disabled", err)
+		slog.Warn("failed to create Prometheus exporter, metrics disabled", "error", err)
 		return nil, http.NotFoundHandler(), func(context.Context) error { return nil }
 	}
 
@@ -115,7 +115,8 @@ func (m *Metrics) Middleware(next http.Handler) http.Handler {
 
 		next.ServeHTTP(rw, r)
 
-		duration := time.Since(start).Seconds()
+		duration := time.Since(start)
+		durationSec := duration.Seconds()
 		attrs := []attribute.KeyValue{
 			attribute.String("method", r.Method),
 			attribute.String("path", routePattern(r)),
@@ -123,7 +124,26 @@ func (m *Metrics) Middleware(next http.Handler) http.Handler {
 		}
 
 		m.requestsTotal.Add(r.Context(), 1, otelmetric.WithAttributes(attrs...))
-		m.requestDuration.Record(r.Context(), duration, otelmetric.WithAttributes(attrs...))
+		m.requestDuration.Record(r.Context(), durationSec, otelmetric.WithAttributes(attrs...))
+
+		// Structured request logging — skip noisy health/metrics endpoints
+		path := r.URL.Path
+		if path != "/healthz" && path != "/readyz" && path != "/metrics" {
+			logLevel := slog.LevelDebug
+			if rw.statusCode >= 500 {
+				logLevel = slog.LevelError
+			} else if rw.statusCode >= 400 {
+				logLevel = slog.LevelWarn
+			}
+
+			slog.LogAttrs(r.Context(), logLevel, "http request",
+				slog.String("method", r.Method),
+				slog.String("path", path),
+				slog.Int("status", rw.statusCode),
+				slog.Duration("duration", duration),
+				slog.String("ip", r.RemoteAddr),
+			)
+		}
 	})
 }
 

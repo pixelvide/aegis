@@ -14,7 +14,7 @@ import {
 } from "@/components/ui/sidebar"
 import { useOrg } from "@/lib/org-context"
 
-export function OrgProjectSwitcher() {
+export function OrgSwitcher() {
   const { isMobile } = useSidebar()
   const { orgs, currentOrg, switchOrg, loading } = useOrg()
 

@@ -43,6 +43,15 @@ type Config struct {
 	// ValkeyURL is the Valkey/Redis connection address (host:port).
 	// Default: empty (cache disabled). In Docker: valkey:6379.
 	ValkeyURL string
+
+	// LogLevel controls the minimum log level.
+	// Values: debug, info, warn, error. Default: info.
+	LogLevel string
+
+	// LogFormat controls log output format.
+	// Values: text (human-readable), json (structured for log aggregation).
+	// Default: text.
+	LogFormat string
 }
 
 // SMTPConfig holds SMTP mail server settings.
@@ -68,6 +77,8 @@ func Load() (*Config, error) {
 			From: "noreply@aegis.local",
 			TLS:  false,
 		},
+		LogLevel:  "info",
+		LogFormat: "text",
 	}
 
 	if p := os.Getenv("AEGIS_PORT"); p != "" {
@@ -128,6 +139,14 @@ func Load() (*Config, error) {
 	// Valkey (optional — cache disabled if empty)
 	if v := os.Getenv("VALKEY_URL"); v != "" {
 		cfg.ValkeyURL = v
+	}
+
+	// Logging
+	if l := os.Getenv("LOG_LEVEL"); l != "" {
+		cfg.LogLevel = l
+	}
+	if f := os.Getenv("LOG_FORMAT"); f != "" {
+		cfg.LogFormat = f
 	}
 
 	return cfg, nil

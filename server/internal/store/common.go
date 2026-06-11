@@ -4,7 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"log"
+	"log/slog"
 	"regexp"
 	"strings"
 	"time"
@@ -333,7 +333,7 @@ func (cs *CommonStore) migrate() error {
 			continue
 		}
 
-		log.Printf("  → Running migration %d: %s", m.Version, m.Description)
+		slog.Info("running migration", "version", m.Version, "description", m.Description)
 
 		tx, err := cs.db.Begin()
 		if err != nil {

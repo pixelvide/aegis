@@ -3,7 +3,7 @@ package api
 
 import (
 	"encoding/json"
-	"log"
+	"log/slog"
 	"net/http"
 	"strings"
 
@@ -91,7 +91,7 @@ func (s *Server) verifiedMiddleware(next http.HandlerFunc) http.HandlerFunc {
 // protectedMiddleware wraps a handler with auth + email verification + tenant resolution.
 func (s *Server) protectedMiddleware(next http.HandlerFunc) http.HandlerFunc {
 	authMw := middleware.Auth(s.auth, s.common, s.cache)
-	tenantMw := middleware.TenantResolver(s.common)
+	tenantMw := middleware.TenantResolver(s.common, s.config)
 	return func(w http.ResponseWriter, r *http.Request) {
 		authMw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			user := middleware.UserFromContext(r.Context())
@@ -114,27 +114,119 @@ func (s *Server) agentMiddleware(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
+// AuthPageRedirect returns a middleware that redirects SPA auth page requests
+// (e.g., /login, /forgot-password) to the base domain when the request arrives
+// on a non-base-domain host. This provides an instant HTTP 302 redirect before
+// any JavaScript loads — much faster than the frontend-side redirect.
+//
+// Only affects page-level requests (not /api/* — those are blocked by
+// baseOnlyMiddleware with a 403).
+func AuthPageRedirect(cfg *config.Config) func(http.Handler) http.Handler {
+	authPages := map[string]bool{
+		"/login":           true,
+		"/forgot-password": true,
+		"/reset-password":  true,
+		"/verify-email":    true,
+	}
+
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if cfg.BaseDomain == "" {
+				next.ServeHTTP(w, r)
+				return
+			}
+
+			// Only redirect auth pages, not API calls or assets
+			if !authPages[r.URL.Path] {
+				next.ServeHTTP(w, r)
+				return
+			}
+
+			host := r.Host
+			if idx := strings.LastIndex(host, ":"); idx != -1 {
+				host = host[:idx]
+			}
+
+			// Already on the base domain — no redirect needed
+			if host == cfg.BaseDomain {
+				next.ServeHTTP(w, r)
+				return
+			}
+
+			// Build redirect URL: base domain + same path + return_to param
+			protocol := "https"
+			if strings.HasPrefix(cfg.BaseURL, "http://") {
+				protocol = "http"
+			}
+			port := ""
+			if idx := strings.LastIndex(r.Host, ":"); idx != -1 {
+				port = r.Host[idx:] // includes the ":"
+			}
+
+			returnTo := protocol + "://" + r.Host + "/"
+			targetPath := r.URL.Path
+			if r.URL.RawQuery != "" {
+				targetPath += "?" + r.URL.RawQuery + "&return_to=" + returnTo
+			} else {
+				targetPath += "?return_to=" + returnTo
+			}
+
+			redirectURL := protocol + "://" + cfg.BaseDomain + port + targetPath
+			http.Redirect(w, r, redirectURL, http.StatusFound)
+		})
+	}
+}
+
+// baseOnlyMiddleware rejects requests that arrive on an org subdomain
+// when AEGIS_BASE_DOMAIN is set. Auth flows (login, register, password reset,
+// MFA, email verification) must happen on the exact base domain only.
+// Any other host (org subdomains, IP addresses, unknown hostnames) is rejected.
+// This is a security enforcement — the UI also redirects, but server-side
+// blocking prevents direct API abuse and avoids broken cookie scoping
+// (e.g., logging in via IP would set Domain=.aegis.io which the browser
+// wouldn't send back to the IP).
+func (s *Server) baseOnlyMiddleware(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if s.config.BaseDomain != "" {
+			host := r.Host
+			if idx := strings.LastIndex(host, ":"); idx != -1 {
+				host = host[:idx]
+			}
+			// Only allow the exact base domain — reject everything else
+			if host != s.config.BaseDomain {
+				writeJSON(w, http.StatusForbidden, map[string]any{
+					"error":    "auth_base_domain_only",
+					"message":  "Authentication is only available on the base domain",
+					"base_url": s.config.BaseURL,
+				})
+				return
+			}
+		}
+		next(w, r)
+	}
+}
+
 // routes registers all API endpoints.
 func (s *Server) routes() {
-	// ─── Auth (public) ──────────────────────────────────────────────
-	s.mux.HandleFunc("POST /api/v1/auth/register", s.handleRegister)
-	s.mux.HandleFunc("POST /api/v1/auth/login", s.handleLogin)
-	s.mux.HandleFunc("POST /api/v1/auth/logout", s.handleLogout)
-	s.mux.HandleFunc("GET /api/v1/auth/me", s.authMiddleware(s.handleMe))
+	// ─── Auth (public — base domain only when AEGIS_BASE_DOMAIN is set) ──
+	s.mux.HandleFunc("POST /api/v1/auth/register", s.baseOnlyMiddleware(s.handleRegister))
+	s.mux.HandleFunc("POST /api/v1/auth/login", s.baseOnlyMiddleware(s.handleLogin))
+	s.mux.HandleFunc("POST /api/v1/auth/logout", s.baseOnlyMiddleware(s.handleLogout))
+	s.mux.HandleFunc("GET /api/v1/auth/me", s.authMiddleware(s.handleMe)) // works on any subdomain
 
-	// Password reset (public)
-	s.mux.HandleFunc("POST /api/v1/auth/forgot-password", s.handleForgotPassword)
-	s.mux.HandleFunc("POST /api/v1/auth/reset-password", s.handleResetPassword)
+	// Password reset (public — base domain only)
+	s.mux.HandleFunc("POST /api/v1/auth/forgot-password", s.baseOnlyMiddleware(s.handleForgotPassword))
+	s.mux.HandleFunc("POST /api/v1/auth/reset-password", s.baseOnlyMiddleware(s.handleResetPassword))
 
 	// Password change (requires verified email)
 	s.mux.HandleFunc("POST /api/v1/auth/change-password", s.verifiedMiddleware(s.handleChangePassword))
 
-	// MFA validation during login (public — uses MFA token, not full auth)
-	s.mux.HandleFunc("POST /api/v1/auth/mfa/validate", s.handleMFAValidate)
-	s.mux.HandleFunc("POST /api/v1/auth/mfa/send-email-otp", s.handleSendEmailOTP)
+	// MFA validation during login (public — base domain only)
+	s.mux.HandleFunc("POST /api/v1/auth/mfa/validate", s.baseOnlyMiddleware(s.handleMFAValidate))
+	s.mux.HandleFunc("POST /api/v1/auth/mfa/send-email-otp", s.baseOnlyMiddleware(s.handleSendEmailOTP))
 
-	// Email verification (public — uses token from email link)
-	s.mux.HandleFunc("POST /api/v1/auth/verify-email", s.handleVerifyEmail)
+	// Email verification (public — base domain only)
+	s.mux.HandleFunc("POST /api/v1/auth/verify-email", s.baseOnlyMiddleware(s.handleVerifyEmail))
 
 	// ─── Profile (authenticated, no tenant context) ──────────────────
 	// Emails — accessible WITHOUT verified email (needed to verify!)
@@ -170,8 +262,9 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/v1/orgs", s.verifiedMiddleware(s.handleListOrgs))
 	s.mux.HandleFunc("GET /api/v1/orgs/{slug}", s.verifiedMiddleware(s.handleGetOrg))
 
-	// ─── Feature flags (authenticated) ──────────────────────────────
+	// ─── Feature flags and app config ───────────────────────────────
 	s.mux.HandleFunc("GET /api/v1/config/features", s.authMiddleware(s.handleListFeatureFlags))
+	s.mux.HandleFunc("GET /api/v1/config/auth", s.handleAuthConfig) // public — UI needs this pre-login
 
 	// ─── Tenant-scoped routes (auth + verified email + org context) ──
 	// Scans (read-only, legacy data)
@@ -227,6 +320,15 @@ func (s *Server) handleListFeatureFlags(w http.ResponseWriter, r *http.Request) 
 	writeJSON(w, http.StatusOK, flags)
 }
 
+// handleAuthConfig returns auth configuration for the UI.
+// Public endpoint — the login page needs this before the user has a session.
+func (s *Server) handleAuthConfig(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]any{
+		"base_domain": s.config.BaseDomain,
+	})
+}
+
+
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
 func (s *Server) isAllowedOrigin(origin string) bool {
@@ -248,7 +350,7 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(status)
 	if err := json.NewEncoder(w).Encode(v); err != nil {
-		log.Printf("json encode error: %v", err)
+		slog.Error("json encode error", "error", err)
 	}
 }
 

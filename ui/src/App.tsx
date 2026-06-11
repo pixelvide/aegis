@@ -1,3 +1,4 @@
+import { useEffect } from "react"
 import { BrowserRouter, Routes, Route, useLocation } from "react-router-dom"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import {
@@ -17,10 +18,48 @@ import FindingDetailPage from "@/pages/finding-detail"
 import AgentsPage from "@/pages/agents"
 import SettingsPage from "@/pages/settings"
 import ProfilePage from "@/pages/profile"
+import ProjectsPage from "@/pages/projects"
 import LoginPage from "@/pages/login"
 import ForgotPasswordPage from "@/pages/forgot-password"
 import ResetPasswordPage from "@/pages/reset-password"
 import VerifyEmailPage from "@/pages/verify-email"
+
+// ─── Subdomain Auth Redirect ──────────────────────────────────────────────
+// When AEGIS_BASE_DOMAIN is set and the user is on an org subdomain
+// (e.g., acme.aegis.io), redirect auth pages to the base domain.
+// After login, the user is sent back via the ?return_to= param.
+function useSubdomainAuthRedirect() {
+  const location = useLocation()
+
+  useEffect(() => {
+    const publicPaths = ["/login", "/forgot-password", "/reset-password", "/verify-email"]
+    const isPublic = publicPaths.some(p => location.pathname.startsWith(p))
+    if (!isPublic) return
+
+    // Fetch auth config to check if subdomain mode is active
+    fetch("/api/v1/config/auth")
+      .then(r => r.json())
+      .then(data => {
+        if (!data.base_domain) return // dev mode — no redirect
+
+        const host = window.location.hostname
+        const baseDomain = data.base_domain
+
+        // If we're NOT on the exact base domain, redirect to it.
+        // This covers org subdomains, IP access, and any other hostname.
+        if (host !== baseDomain) {
+          const protocol = window.location.protocol
+          const port = window.location.port ? `:${window.location.port}` : ""
+          const returnTo = `${protocol}//${host}${port}/`
+          const targetPath = location.pathname + location.search
+          // Append return_to so the login page can redirect back after auth
+          const separator = targetPath.includes("?") ? "&" : "?"
+          window.location.href = `${protocol}//${baseDomain}${port}${targetPath}${separator}return_to=${encodeURIComponent(returnTo)}`
+        }
+      })
+      .catch(() => {}) // Fail open for dev
+  }, [location.pathname, location.search])
+}
 
 function AppLayout() {
   const { user, loading } = useAuth()
@@ -69,6 +108,7 @@ function AppLayout() {
                       <Route path="/scans" element={<ScansPage />} />
                       <Route path="/findings" element={<FindingsPage />} />
                       <Route path="/findings/:id" element={<FindingDetailPage />} />
+                      <Route path="/projects" element={<ProjectsPage />} />
                       <Route path="/agents" element={<AgentsPage />} />
                       <Route path="/settings" element={<SettingsPage />} />
                       <Route path="/profile" element={<ProfilePage />} />
@@ -88,6 +128,7 @@ export default function App() {
   return (
     <BrowserRouter>
       <AuthProvider>
+        <SubdomainAuthGuard />
         <Routes>
           <Route path="/login" element={<LoginPage />} />
           <Route path="/forgot-password" element={<ForgotPasswordPage />} />
@@ -99,4 +140,10 @@ export default function App() {
       </AuthProvider>
     </BrowserRouter>
   )
+}
+
+// Wrapper component to run the subdomain redirect hook inside Router context
+function SubdomainAuthGuard() {
+  useSubdomainAuthRedirect()
+  return null
 }

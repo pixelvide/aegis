@@ -64,6 +64,7 @@ services:
       AEGIS_BIND: "0.0.0.0"
       AEGIS_PORT: "8080"
       AEGIS_ALLOWED_ORIGINS: ${AEGIS_ALLOWED_ORIGINS:-http://localhost:8080}
+      AEGIS_BASE_DOMAIN: ${AEGIS_BASE_DOMAIN:-}
       # SMTP — defaults to MailDev for local dev
       SMTP_HOST: ${SMTP_HOST:-maildev}
       SMTP_PORT: ${SMTP_PORT:-1025}
@@ -71,6 +72,9 @@ services:
       SMTP_PASSWORD: ${SMTP_PASSWORD:-}
       SMTP_FROM: ${SMTP_FROM:-noreply@aegis.local}
       SMTP_TLS: ${SMTP_TLS:-false}
+      # Logging
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      LOG_FORMAT: ${LOG_FORMAT:-text}
     depends_on:
       postgres:
         condition: service_healthy
