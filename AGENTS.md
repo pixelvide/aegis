@@ -137,10 +137,19 @@ Each org tracks a `schema_version` in `common.organizations`. This allows:
   - `auth/` — password hashing + JWT generation/validation
   - `config/` — environment-based configuration
   - `email/` — SMTP-based transactional email sending
-  - `middleware/` — auth, tenant resolution, and token auth
+  - `middleware/` — auth, tenant resolution, token auth, request ID
   - `models/` — domain types (shared between API and store)
+  - `requestid/` — request ID context utilities
   - `store/` — data access (Store interface + PostgreSQL implementation)
-- **Error responses:** Use `writeError(w, status, "message")` — returns `{"error": "message"}`.
+- **API responses:** Use the standard Cloudflare-style envelope helpers:
+  - `writeResult(w, r, status, data)` — single resource: `{"success": true, "result": {...}}`
+  - `writeResultMessage(w, r, status, data, msg)` — resource + confirmation message
+  - `writeMessage(w, r, status, msg)` — message-only (logout, password reset)
+  - `writeList(w, r, data, resultInfo)` — paginated list with `result_info`
+  - `writeApiError(w, r, errConstant)` — structured error from `errors.go` constants
+  - `writeValidationErrors(w, r, ...FieldError{})` — field-level validation errors
+  - **Never use `writeJSON` or `writeError` directly** — they are deprecated.
+- **Error codes:** Use pre-defined `ApiError` constants from `api/errors.go`. Never pass raw strings. Use `.WithMessage()` to customize error messages and `.WithDetails()` for field-level validation. Add new error codes to `errors.yaml` (master registry) and regenerate `errors.go`.
 - **Context:** Use `middleware.UserFromContext(ctx)` and `middleware.OrgFromContext(ctx)` to access the authenticated user and current org.
 - **Tenant store:** Use `tenantStore(r)` helper in handlers (calls `middleware.TenantStoreFromContext`).
 - **Imports:** Group as stdlib → external → internal.
@@ -150,7 +159,7 @@ Each org tracks a `schema_version` in `common.organizations`. This allows:
   - `slog.Error("message", "error", err)` — failures that need attention
   - `slog.Debug("message", "key", value)` — verbose tracing (only visible at debug level)
   - Always include structured key-value pairs, not formatted strings
-  - For request-scoped logging, use `logger.FromContext(ctx)` (future OTel trace ID injection)
+  - For request-scoped logging, use `logger.FromContext(r.Context())` — this automatically injects `request_id` into all log lines
 
 ### React UI
 
@@ -236,7 +245,40 @@ ci: add Docker build verification to CI
 - `decodeJSON()` uses `DisallowUnknownFields()`.
 - Successful creation returns `201 Created`.
 - Successful deletion returns `204 No Content`.
-- Errors return `{"error": "human-readable message"}`.
+- All responses use the **Cloudflare-style envelope** with `success`, `request_id`, and either `result` (success) or `errors` (failure).
+- Every response includes a `request_id` (format: `req_<hex>`) in both the JSON body and the `X-Request-ID` response header.
+- Errors return a structured `errors` array: `{"success": false, "errors": [{"type": "...", "code": "...", "ref": "E...", "message": "..."}]}`.
+
+### Error Code Registry
+
+Error codes are defined in `errors.yaml` (project root) and generated as Go constants in `api/errors.go` and TypeScript constants in `ui/src/lib/error-codes.gen.ts`.
+
+| Type | Ref Range | Examples |
+|---|---|---|
+| `auth_error` | E10001–E10007 | `not_authenticated`, `invalid_credentials`, `mfa_required` |
+| `token_error` | E20001–E20004 | `invalid`, `expired`, `scope_mismatch` |
+| `tenant_error` | E30001–E30005 | `not_found`, `not_member`, `slug_taken` |
+| `resource_error` | E40001–E40003 | `not_found`, `conflict`, `already_exists` |
+| `validation_error` | E50001–E50004 | `invalid_request`, `field_required`, `field_invalid` |
+| `permission_error` | E60001–E60003 | `denied`, `feature_disabled`, `mfa_required_by_org` |
+| `rate_limit_error` | E70001 | `exceeded` |
+| `server_error` | E90001–E90002 | `internal`, `unavailable` |
+
+**Rules:**
+1. Every error response MUST use a pre-defined `ApiError` constant from `errors.go` — never pass raw strings.
+2. Error messages are human-readable and MAY change — the `code` and `ref` fields are the stable contract.
+3. New error scenarios MUST define a new code in `errors.yaml` — never reuse an existing code for a different meaning.
+4. Use `.WithMessage()` to customize error messages for specific contexts (e.g., `errValidationFieldInvalid.WithMessage("invalid email")`).
+5. Use `.WithDetails()` or `writeValidationErrors()` for field-level validation errors.
+
+### Request IDs
+
+- The `RequestID` middleware generates a unique `req_<hex>` ID for every request.
+- It is the **outermost middleware** — runs before auth, CORS, or any handler.
+- Request IDs are injected into the request context and available via `requestid.FromContext(ctx)`.
+- All `writeResult`/`writeApiError` helpers automatically include the request ID.
+- `logger.FromContext(r.Context())` automatically adds `request_id` to all log output.
+- Incoming `X-Request-ID` headers from reverse proxies are accepted and preserved.
 
 ### Org Context
 
@@ -362,30 +404,31 @@ Uses Go's stdlib `log/slog`. JSON format is recommended for production with log 
 
 ```bash
 # Register
-curl -c cookies.txt -X POST http://localhost:8080/api/v1/auth/register \
+curl -c cookies.txt -X POST http://lvh.me:8080/api/v1/auth/register \
   -H "Content-Type: application/json" \
   -d '{"email":"test@example.com","password":"SecureP@ss1","name":"Test"}'
+# Response: {"success": true, "request_id": "req_...", "result": {"user": {...}}, "message": "registration successful"}
 
 # Login
-curl -c cookies.txt -X POST http://localhost:8080/api/v1/auth/login \
+curl -c cookies.txt -X POST http://lvh.me:8080/api/v1/auth/login \
   -H "Content-Type: application/json" \
   -d '{"email":"test@example.com","password":"SecureP@ss1"}'
 
 # Authenticated request
-curl -b cookies.txt http://localhost:8080/api/v1/auth/me
+curl -b cookies.txt http://lvh.me:8080/api/v1/auth/me
 
 # Org-scoped request
-curl -b cookies.txt http://localhost:8080/api/v1/findings -H "X-Org-Slug: test"
+curl -b cookies.txt http://lvh.me:8080/api/v1/findings -H "X-Org-Slug: test"
 
 # Create an API token
-curl -b cookies.txt -X POST http://localhost:8080/api/v1/tokens \
+curl -b cookies.txt -X POST http://lvh.me:8080/api/v1/tokens \
   -H "Content-Type: application/json" \
   -H "X-Org-Slug: test" \
   -d '{"name":"CI Token","expires_in":90}'
-# Save the "token" field from the response!
+# Save the "result.token" field from the response!
 
 # Agent: push a finding (Bearer token)
-curl -X POST http://localhost:8080/api/v1/agent/findings \
+curl -X POST http://lvh.me:8080/api/v1/agent/findings \
   -H "Authorization: Bearer aegis_a1b2c3d4..." \
   -H "X-Org-Slug: test" \
   -H "Content-Type: application/json" \

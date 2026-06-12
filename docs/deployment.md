@@ -220,9 +220,9 @@ scrape_configs:
 
 ### Swagger / API Docs
 
-The interactive API documentation is available at `http://localhost:8080/api/v1/docs`.
+The interactive API documentation is available at `http://lvh.me:8080/api/v1/docs`.
 
-The raw OpenAPI 3.0 spec is at `http://localhost:8080/api/v1/docs/openapi.yaml`.
+The raw OpenAPI 3.0 spec is at `http://lvh.me:8080/api/v1/docs/openapi.yaml`.
 
 ---
 
@@ -233,7 +233,7 @@ The raw OpenAPI 3.0 spec is at `http://localhost:8080/api/v1/docs/openapi.yaml`.
 | Port 8080 in use | `lsof -ti :8080 \| xargs kill -9` |
 | DB connection refused | Check `docker compose ps` — is postgres healthy? |
 | JWT errors after restart | Set `JWT_SECRET` in `.env` (ephemeral secret changes on restart) |
-| CORS errors | Add your domain to `AEGIS_ALLOWED_ORIGINS` |
+| CORS errors | When `AEGIS_BASE_DOMAIN` is set, subdomain origins are auto-allowed. Otherwise, add your domain to `AEGIS_ALLOWED_ORIGINS` |
 | Cookies not sent | Ensure `credentials: "include"` in fetch and `Access-Control-Allow-Credentials` on server |
 | Migration failed | Check `docker compose logs aegis-server` for the specific error |
 

@@ -96,11 +96,11 @@ func TenantResolver(common *store.CommonStore, cfg *config.Config) func(http.Han
 			// 3. If domain resolved the org, reject conflicting headers
 			if resolvedFromDomain && org != nil {
 				if headerID := r.Header.Get("X-Org-ID"); headerID != "" && headerID != org.ID {
-					http.Error(w, `{"error":"X-Org-ID header conflicts with subdomain"}`, http.StatusBadRequest)
+					writeMiddlewareError(w, r, errTenantHeaderConflictID)
 					return
 				}
 				if headerSlug := r.Header.Get("X-Org-Slug"); headerSlug != "" && headerSlug != org.Slug {
-					http.Error(w, `{"error":"X-Org-Slug header conflicts with subdomain"}`, http.StatusBadRequest)
+					writeMiddlewareError(w, r, errTenantHeaderConflictSlug)
 					return
 				}
 			}
@@ -115,11 +115,11 @@ func TenantResolver(common *store.CommonStore, cfg *config.Config) func(http.Han
 			}
 
 			if err != nil {
-				http.Error(w, `{"error":"internal error resolving org"}`, http.StatusInternalServerError)
+				writeMiddlewareError(w, r, errServerInternal)
 				return
 			}
 			if org == nil {
-				http.Error(w, `{"error":"organization not found, set X-Org-ID or X-Org-Slug header"}`, http.StatusBadRequest)
+				writeMiddlewareError(w, r, errTenantNotFound)
 				return
 			}
 
@@ -129,11 +129,11 @@ func TenantResolver(common *store.CommonStore, cfg *config.Config) func(http.Han
 			if user != nil {
 				role, err := common.GetMemberRole(r.Context(), org.ID, user.ID)
 				if err != nil {
-					http.Error(w, `{"error":"internal error checking membership"}`, http.StatusInternalServerError)
+					writeMiddlewareError(w, r, errServerInternal)
 					return
 				}
 				if role == "" {
-					http.Error(w, `{"error":"you are not a member of this organization"}`, http.StatusForbidden)
+					writeMiddlewareError(w, r, errTenantNotMember)
 					return
 				}
 				memberRole = role

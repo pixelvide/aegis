@@ -26,17 +26,17 @@ var validPlans = map[string]bool{"free": true, "pro": true, "enterprise": true}
 func (s *Server) handleCreateOrg(w http.ResponseWriter, r *http.Request) {
 	var req createOrgRequest
 	if err := decodeJSON(r, &req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
+		writeApiError(w, r, errValidationInvalidBody)
 		return
 	}
 
 	req.Name = strings.TrimSpace(req.Name)
 	if req.Name == "" {
-		writeError(w, http.StatusBadRequest, "name is required")
+		writeApiError(w, r, errValidationFieldRequired.WithMessage("Name is required"))
 		return
 	}
 	if len(req.Name) > 100 {
-		writeError(w, http.StatusBadRequest, "name must be 100 characters or fewer")
+		writeApiError(w, r, errValidationFieldInvalid.WithMessage("Name must be 100 characters or fewer"))
 		return
 	}
 
@@ -45,24 +45,24 @@ func (s *Server) handleCreateOrg(w http.ResponseWriter, r *http.Request) {
 		slug = store.SanitizeSlug(req.Name)
 	}
 	if !slugPattern.MatchString(slug) {
-		writeError(w, http.StatusBadRequest, "slug must be 3-50 lowercase alphanumeric characters or hyphens")
+		writeApiError(w, r, errValidationFieldInvalid.WithMessage("Slug must be 3-50 lowercase alphanumeric characters or hyphens"))
 		return
 	}
 
 	// Check reserved slugs early with a user-friendly error
 	if store.IsReservedSlug(slug) {
-		writeError(w, http.StatusConflict, "this slug is reserved and cannot be used")
+		writeApiError(w, r, errTenantSlugReserved)
 		return
 	}
 
 	// Check if slug is already taken
 	existing, err := s.common.GetOrgBySlug(r.Context(), slug)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to check slug availability")
+		writeApiError(w, r, errServerInternal)
 		return
 	}
 	if existing != nil {
-		writeError(w, http.StatusConflict, "an organization with this slug already exists")
+		writeApiError(w, r, errTenantSlugTaken)
 		return
 	}
 
@@ -71,7 +71,7 @@ func (s *Server) handleCreateOrg(w http.ResponseWriter, r *http.Request) {
 		plan = "free"
 	}
 	if !validPlans[plan] {
-		writeError(w, http.StatusBadRequest, "invalid plan: must be free, pro, or enterprise")
+		writeApiError(w, r, errValidationFieldInvalid.WithMessage("Invalid plan: must be free, pro, or enterprise"))
 		return
 	}
 
@@ -82,7 +82,7 @@ func (s *Server) handleCreateOrg(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := s.common.CreateOrganization(r.Context(), org); err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to create organization")
+		writeApiError(w, r, errServerInternal)
 		return
 	}
 
@@ -92,26 +92,26 @@ func (s *Server) handleCreateOrg(w http.ResponseWriter, r *http.Request) {
 		s.common.AddOrgMember(r.Context(), org.ID, user.ID, "owner")
 	}
 
-	writeJSON(w, http.StatusCreated, org)
+	writeResult(w, r, http.StatusCreated, org)
 }
 
 // handleListOrgs returns the current user's organizations and app config.
 func (s *Server) handleListOrgs(w http.ResponseWriter, r *http.Request) {
 	user := middleware.UserFromContext(r.Context())
 	if user == nil {
-		writeError(w, http.StatusUnauthorized, "not authenticated")
+		writeApiError(w, r, errAuthNotAuthenticated)
 		return
 	}
 
 	orgs, err := s.common.GetUserOrgs(r.Context(), user.ID)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to list organizations")
+		writeApiError(w, r, errServerInternal)
 		return
 	}
 	if orgs == nil {
 		orgs = []models.Organization{}
 	}
-	writeJSON(w, http.StatusOK, map[string]any{
+	writeResult(w, r, http.StatusOK, map[string]any{
 		"orgs":        orgs,
 		"base_domain": s.config.BaseDomain,
 	})
@@ -122,12 +122,12 @@ func (s *Server) handleGetOrg(w http.ResponseWriter, r *http.Request) {
 	slug := pathParam(r, "slug")
 	org, err := s.common.GetOrgBySlug(r.Context(), slug)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to get organization")
+		writeApiError(w, r, errServerInternal)
 		return
 	}
 	if org == nil {
-		writeError(w, http.StatusNotFound, "organization not found")
+		writeApiError(w, r, errTenantNotFound)
 		return
 	}
-	writeJSON(w, http.StatusOK, org)
+	writeResult(w, r, http.StatusOK, org)
 }

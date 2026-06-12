@@ -1,0 +1,144 @@
+# errors.yaml — Aegis Error Code Registry
+# This is the single source of truth for all structured error codes.
+# Run `go generate ./internal/api/...` to regenerate Go and TypeScript constants.
+
+types:
+  auth_error:
+    codes:
+      not_authenticated:
+        ref: E10001
+        status: 401
+        message: "Authentication required"
+      invalid_credentials:
+        ref: E10002
+        status: 401
+        message: "Invalid email or password"
+      email_not_verified:
+        ref: E10003
+        status: 403
+        message: "Please verify your email address before continuing"
+      mfa_required:
+        ref: E10004
+        status: 403
+        message: "MFA verification required"
+      mfa_invalid_code:
+        ref: E10005
+        status: 401
+        message: "Invalid or expired verification code"
+      session_revoked:
+        ref: E10006
+        status: 401
+        message: "Session has been revoked"
+      base_domain_only:
+        ref: E10007
+        status: 403
+        message: "Authentication is only available on the base domain"
+
+  token_error:
+    codes:
+      invalid:
+        ref: E20001
+        status: 401
+        message: "Invalid or revoked token"
+      expired:
+        ref: E20002
+        status: 401
+        message: "Token has expired"
+      scope_mismatch:
+        ref: E20003
+        status: 403
+        message: "Token does not have access to this resource"
+      invalid_format:
+        ref: E20004
+        status: 401
+        message: "Invalid authorization format"
+
+  tenant_error:
+    codes:
+      not_found:
+        ref: E30001
+        status: 404
+        message: "Organization not found"
+      not_member:
+        ref: E30002
+        status: 403
+        message: "You are not a member of this organization"
+      slug_taken:
+        ref: E30003
+        status: 409
+        message: "Organization slug is already taken"
+      slug_reserved:
+        ref: E30004
+        status: 409
+        message: "Organization slug is reserved"
+      header_conflict:
+        ref: E30005
+        status: 400
+        message: "Org header conflicts with subdomain"
+
+  resource_error:
+    codes:
+      not_found:
+        ref: E40001
+        status: 404
+        message: "Resource not found"
+      conflict:
+        ref: E40002
+        status: 409
+        message: "Resource conflict"
+      already_exists:
+        ref: E40003
+        status: 409
+        message: "Resource already exists"
+
+  validation_error:
+    codes:
+      invalid_request:
+        ref: E50001
+        status: 400
+        message: "Invalid request"
+      invalid_body:
+        ref: E50002
+        status: 400
+        message: "Invalid request body"
+      field_required:
+        ref: E50003
+        status: 400
+        message: "Required field missing"
+      field_invalid:
+        ref: E50004
+        status: 400
+        message: "Invalid field value"
+
+  permission_error:
+    codes:
+      denied:
+        ref: E60001
+        status: 403
+        message: "Insufficient permissions"
+      feature_disabled:
+        ref: E60002
+        status: 403
+        message: "Feature is not enabled"
+      mfa_required_by_org:
+        ref: E60003
+        status: 403
+        message: "This organization requires MFA to be enabled"
+
+  rate_limit_error:
+    codes:
+      exceeded:
+        ref: E70001
+        status: 429
+        message: "Too many requests"
+
+  server_error:
+    codes:
+      internal:
+        ref: E90001
+        status: 500
+        message: "Internal server error"
+      unavailable:
+        ref: E90002
+        status: 503
+        message: "Service temporarily unavailable"

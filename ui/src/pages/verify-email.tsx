@@ -26,8 +26,8 @@ export default function VerifyEmailPage() {
         if (res.ok) {
           setStatus("success")
         } else {
-          const data = await res.json().catch(() => ({ error: "Verification failed" }))
-          setError(data.error || "Verification failed")
+          const body = await res.json().catch(() => ({ errors: [{ message: "Verification failed" }] }))
+          setError(body.errors?.[0]?.message || body.error || "Verification failed")
           setStatus("error")
         }
       })

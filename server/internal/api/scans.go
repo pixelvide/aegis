@@ -9,27 +9,28 @@ import (
 // ─── Scans (read-only, legacy data) ─────────────────────────────────────────
 
 func (s *Server) handleListScans(w http.ResponseWriter, r *http.Request) {
-	scans, err := tenantStore(r).ListScans(r.Context())
+	projectId := pathParam(r, "projectId")
+	scans, err := tenantStore(r).ListScans(r.Context(), projectId)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to list scans")
+		writeApiError(w, r, errServerInternal)
 		return
 	}
 	if scans == nil {
 		scans = []models.Scan{}
 	}
-	writeJSON(w, http.StatusOK, scans)
+	writeResult(w, r, http.StatusOK, scans)
 }
 
 func (s *Server) handleGetScan(w http.ResponseWriter, r *http.Request) {
 	id := pathParam(r, "id")
 	scan, err := tenantStore(r).GetScan(r.Context(), id)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to get scan")
+		writeApiError(w, r, errServerInternal)
 		return
 	}
 	if scan == nil {
-		writeError(w, http.StatusNotFound, "scan not found")
+		writeApiError(w, r, errResourceNotFound.WithMessage("Scan not found"))
 		return
 	}
-	writeJSON(w, http.StatusOK, scan)
+	writeResult(w, r, http.StatusOK, scan)
 }

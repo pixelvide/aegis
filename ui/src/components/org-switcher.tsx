@@ -14,13 +14,25 @@ import {
   useSidebar,
 } from "@/components/ui/sidebar"
 import { useOrg } from "@/lib/org-context"
+import { useDomainMode, baseDomainUrl } from "@/lib/domain"
 import { CreateOrgDialog } from "@/components/create-org-dialog"
 import type { Organization } from "@/lib/types"
 
 export function OrgSwitcher() {
   const { isMobile } = useSidebar()
   const { orgs, currentOrg, switchOrg, loading, refresh } = useOrg()
+  const { baseDomain } = useDomainMode()
   const [createDialogOpen, setCreateDialogOpen] = useState(false)
+
+  const handleCreateOrg = () => {
+    if (baseDomain) {
+      // Redirect to base domain /orgs for org creation
+      window.location.href = baseDomainUrl(baseDomain, "/orgs")
+    } else {
+      // header-only mode: use inline dialog
+      setCreateDialogOpen(true)
+    }
+  }
 
   const handleOrgCreated = (org: Organization) => {
     refresh()
@@ -45,7 +57,7 @@ export function OrgSwitcher() {
         <SidebarMenuButton
           size="lg"
           id="org-project-switcher"
-          onClick={() => setCreateDialogOpen(true)}
+          onClick={handleCreateOrg}
         >
           <div className="flex size-8 items-center justify-center rounded-lg bg-muted">
             <Building2 className="h-4 w-4 text-muted-foreground" />
@@ -119,7 +131,7 @@ export function OrgSwitcher() {
 
           <DropdownMenuItem
             className="gap-2 p-2"
-            onClick={() => setCreateDialogOpen(true)}
+            onClick={handleCreateOrg}
             id="create-org-menu-item"
           >
             <Plus className="h-4 w-4" />

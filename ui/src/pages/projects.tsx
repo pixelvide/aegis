@@ -12,28 +12,31 @@ import {
 } from "@/components/ui/dialog"
 import { FolderKanban, Plus, Calendar } from "lucide-react"
 import { projectsApi } from "@/lib/api"
+import { useProject } from "@/lib/project-context"
 import { formatDate } from "@/lib/utils"
 import type { Project } from "@/lib/types"
 
 export default function ProjectsPage() {
   const [projects, setProjects] = useState<Project[]>([])
   const [loading, setLoading] = useState(true)
+  const { switchProject } = useProject()
   const [dialogOpen, setDialogOpen] = useState(false)
   const [newName, setNewName] = useState("")
   const [creating, setCreating] = useState(false)
   const [error, setError] = useState("")
 
-  const loadProjects = useCallback(() => {
-    projectsApi
-      .list()
-      .then(setProjects)
+  const loadData = useCallback(() => {
+    projectsApi.list()
+      .then((projectsData) => {
+        setProjects(projectsData || [])
+      })
       .catch(() => setProjects([]))
       .finally(() => setLoading(false))
   }, [])
 
   useEffect(() => {
-    loadProjects()
-  }, [loadProjects])
+    loadData()
+  }, [loadData])
 
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -45,7 +48,7 @@ export default function ProjectsPage() {
       await projectsApi.create({ name: newName.trim() })
       setNewName("")
       setDialogOpen(false)
-      loadProjects()
+      loadData()
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to create project")
     } finally {
@@ -99,12 +102,16 @@ export default function ProjectsPage() {
       ) : (
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {projects.map((p) => (
-            <Card key={p.id} className="hover:border-foreground/20 transition-colors">
+            <Card 
+              key={p.id} 
+              className="hover:border-primary/50 transition-colors cursor-pointer group"
+              onClick={() => switchProject(p)}
+            >
               <CardHeader className="pb-3">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2.5">
-                    <FolderKanban className="h-4 w-4 text-muted-foreground" />
-                    <CardTitle className="text-sm font-medium">{p.name}</CardTitle>
+                    <FolderKanban className="h-4 w-4 text-muted-foreground group-hover:text-primary transition-colors" />
+                    <CardTitle className="text-sm font-medium group-hover:text-primary transition-colors">{p.name}</CardTitle>
                   </div>
                 </div>
               </CardHeader>
@@ -151,7 +158,7 @@ export default function ProjectsPage() {
                 autoFocus
               />
               <p className="text-xs text-muted-foreground mt-1.5">
-                A URL-friendly slug will be generated automatically from the name.
+                This will be the display name for your project.
               </p>
             </div>
 

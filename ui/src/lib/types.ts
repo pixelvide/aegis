@@ -88,6 +88,7 @@ export interface CreateScanRequest {
   persona: string
   mode: ExecMode
   prompt?: string
+  project_id?: string
 }
 
 // ─── Multi-Tenant Types ─────────────────────────────────────────────────────

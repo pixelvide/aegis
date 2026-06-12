@@ -19,7 +19,7 @@ type Store interface {
 	GetScan(ctx context.Context, id string) (*models.Scan, error)
 
 	// ListScans returns all scans, newest first.
-	ListScans(ctx context.Context) ([]models.Scan, error)
+	ListScans(ctx context.Context, projectID string) ([]models.Scan, error)
 
 	// UpdateScan updates a scan's mutable fields (status, pid, timestamps, summary).
 	UpdateScan(ctx context.Context, scan *models.Scan) error
@@ -77,7 +77,7 @@ type Store interface {
 	// --- Dashboard ---
 
 	// GetDashboardStats returns aggregate statistics.
-	GetDashboardStats(ctx context.Context) (*DashboardStats, error)
+	GetDashboardStats(ctx context.Context, projectID string) (*DashboardStats, error)
 
 	// --- Projects ---
 

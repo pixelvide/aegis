@@ -41,28 +41,33 @@ func New(common *store.CommonStore, authSvc *authpkg.Service, emailSvc *email.Se
 
 // ServeHTTP implements http.Handler.
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	// Security headers
-	w.Header().Set("X-Content-Type-Options", "nosniff")
-	w.Header().Set("X-Frame-Options", "DENY")
-	w.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
-	w.Header().Set("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+	// Request ID — must be outermost, before any other middleware.
+	// Wraps the entire request lifecycle so that even CORS preflight,
+	// auth failures, and 404s have a traceable request ID.
+	middleware.RequestID(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Security headers
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("X-Frame-Options", "DENY")
+		w.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
+		w.Header().Set("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
 
-	// CORS
-	origin := r.Header.Get("Origin")
-	if origin != "" && s.isAllowedOrigin(origin) {
-		w.Header().Set("Access-Control-Allow-Origin", origin)
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Org-ID, X-Org-Slug")
-		w.Header().Set("Access-Control-Allow-Credentials", "true")
-		w.Header().Set("Access-Control-Max-Age", "86400")
-	}
+		// CORS
+		origin := r.Header.Get("Origin")
+		if origin != "" && s.isAllowedOrigin(origin) {
+			w.Header().Set("Access-Control-Allow-Origin", origin)
+			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE, OPTIONS")
+			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Org-ID, X-Org-Slug")
+			w.Header().Set("Access-Control-Allow-Credentials", "true")
+			w.Header().Set("Access-Control-Max-Age", "86400")
+		}
 
-	if r.Method == http.MethodOptions {
-		w.WriteHeader(http.StatusNoContent)
-		return
-	}
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
 
-	s.mux.ServeHTTP(w, r)
+		s.mux.ServeHTTP(w, r)
+	})).ServeHTTP(w, r)
 }
 
 // authMiddleware wraps a handler with authentication.
@@ -79,9 +84,7 @@ func (s *Server) verifiedMiddleware(next http.HandlerFunc) http.HandlerFunc {
 	return s.authMiddleware(func(w http.ResponseWriter, r *http.Request) {
 		user := middleware.UserFromContext(r.Context())
 		if user != nil && !user.EmailVerified {
-			w.Header().Set("Content-Type", "application/json; charset=utf-8")
-			w.WriteHeader(http.StatusForbidden)
-			w.Write([]byte(`{"error":"email_not_verified","message":"Please verify your email address before continuing"}`))
+			writeApiError(w, r, errAuthEmailNotVerified)
 			return
 		}
 		next(w, r)
@@ -96,9 +99,7 @@ func (s *Server) protectedMiddleware(next http.HandlerFunc) http.HandlerFunc {
 		authMw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			user := middleware.UserFromContext(r.Context())
 			if user != nil && !user.EmailVerified {
-				w.Header().Set("Content-Type", "application/json; charset=utf-8")
-				w.WriteHeader(http.StatusForbidden)
-				w.Write([]byte(`{"error":"email_not_verified","message":"Please verify your email address before continuing"}`))
+				writeApiError(w, r, errAuthEmailNotVerified)
 				return
 			}
 			tenantMw(http.HandlerFunc(next)).ServeHTTP(w, r)
@@ -122,11 +123,16 @@ func (s *Server) agentMiddleware(next http.HandlerFunc) http.HandlerFunc {
 // Only affects page-level requests (not /api/* — those are blocked by
 // baseOnlyMiddleware with a 403).
 func AuthPageRedirect(cfg *config.Config) func(http.Handler) http.Handler {
-	authPages := map[string]bool{
-		"/login":           true,
-		"/forgot-password": true,
-		"/reset-password":  true,
-		"/verify-email":    true,
+	// Pages that must live on the base domain only.
+	// Auth pages + identity pages (profile, orgs) — redirect from org subdomains.
+	baseOnlyPages := map[string]bool{
+		"/login":                true,
+		"/forgot-password":     true,
+		"/reset-password":      true,
+		"/verify-email":        true,
+		"/verify-email-pending": true,
+		"/profile":             true,
+		"/orgs":                true,
 	}
 
 	return func(next http.Handler) http.Handler {
@@ -136,8 +142,8 @@ func AuthPageRedirect(cfg *config.Config) func(http.Handler) http.Handler {
 				return
 			}
 
-			// Only redirect auth pages, not API calls or assets
-			if !authPages[r.URL.Path] {
+			// Only redirect base-domain-only pages, not API calls or assets
+			if !baseOnlyPages[r.URL.Path] {
 				next.ServeHTTP(w, r)
 				return
 			}
@@ -194,11 +200,7 @@ func (s *Server) baseOnlyMiddleware(next http.HandlerFunc) http.HandlerFunc {
 			}
 			// Only allow the exact base domain — reject everything else
 			if host != s.config.BaseDomain {
-				writeJSON(w, http.StatusForbidden, map[string]any{
-					"error":    "auth_base_domain_only",
-					"message":  "Authentication is only available on the base domain",
-					"base_url": s.config.BaseURL,
-				})
+				writeApiError(w, r, errAuthBaseDomainOnly)
 				return
 			}
 		}
@@ -268,18 +270,19 @@ func (s *Server) routes() {
 
 	// ─── Tenant-scoped routes (auth + verified email + org context) ──
 	// Scans (read-only, legacy data)
-	s.mux.HandleFunc("GET /api/v1/scans", s.protectedMiddleware(s.handleListScans))
-	s.mux.HandleFunc("GET /api/v1/scans/{id}", s.protectedMiddleware(s.handleGetScan))
+	s.mux.HandleFunc("GET /api/v1/projects/{projectId}/scans", s.protectedMiddleware(s.handleListScans))
+	s.mux.HandleFunc("GET /api/v1/projects/{projectId}/scans/{id}", s.protectedMiddleware(s.handleGetScan))
 
 	// Findings
-	s.mux.HandleFunc("GET /api/v1/findings", s.protectedMiddleware(s.handleListFindings))
-	s.mux.HandleFunc("GET /api/v1/findings/{id}", s.protectedMiddleware(s.handleGetFinding))
-	s.mux.HandleFunc("PATCH /api/v1/findings/{id}", s.protectedMiddleware(s.handleUpdateFinding))
-	s.mux.HandleFunc("GET /api/v1/findings/{id}/exploits", s.protectedMiddleware(s.handleListExploits))
-	s.mux.HandleFunc("GET /api/v1/findings/{id}/exploits/{eid}", s.protectedMiddleware(s.handleGetExploit))
+	s.mux.HandleFunc("GET /api/v1/projects/{projectId}/findings", s.protectedMiddleware(s.handleListFindings))
+	s.mux.HandleFunc("GET /api/v1/projects/{projectId}/findings/{id}", s.protectedMiddleware(s.handleGetFinding))
+	s.mux.HandleFunc("PATCH /api/v1/projects/{projectId}/findings/{id}", s.protectedMiddleware(s.handleUpdateFinding))
+	s.mux.HandleFunc("GET /api/v1/projects/{projectId}/findings/{id}/exploits", s.protectedMiddleware(s.handleListExploits))
+	s.mux.HandleFunc("GET /api/v1/projects/{projectId}/findings/{id}/exploits/{eid}", s.protectedMiddleware(s.handleGetExploit))
 
 	// Dashboard
 	s.mux.HandleFunc("GET /api/v1/dashboard/stats", s.protectedMiddleware(s.handleDashboardStats))
+	s.mux.HandleFunc("GET /api/v1/projects/{projectId}/dashboard/stats", s.protectedMiddleware(s.handleProjectDashboardStats))
 
 	// Projects
 	s.mux.HandleFunc("POST /api/v1/projects", s.protectedMiddleware(s.handleCreateProject))
@@ -311,19 +314,19 @@ func (s *Server) routes() {
 func (s *Server) handleListFeatureFlags(w http.ResponseWriter, r *http.Request) {
 	flags, err := s.common.ListFeatureFlags(r.Context())
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to list feature flags")
+		writeApiError(w, r, errServerInternal)
 		return
 	}
 	if flags == nil {
 		flags = []store.FeatureFlag{}
 	}
-	writeJSON(w, http.StatusOK, flags)
+	writeResult(w, r, http.StatusOK, flags)
 }
 
 // handleAuthConfig returns auth configuration for the UI.
 // Public endpoint — the login page needs this before the user has a session.
 func (s *Server) handleAuthConfig(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]any{
+	writeResult(w, r, http.StatusOK, map[string]any{
 		"base_domain": s.config.BaseDomain,
 	})
 }
@@ -337,6 +340,27 @@ func (s *Server) isAllowedOrigin(origin string) bool {
 			return true
 		}
 	}
+
+	// When BaseDomain is set, auto-allow any subdomain origin.
+	// e.g., BaseDomain=lvh.me allows http://acme.lvh.me:8080
+	if s.config.BaseDomain != "" {
+		// Strip scheme (http:// or https://)
+		host := origin
+		if strings.HasPrefix(host, "https://") {
+			host = host[len("https://"):]
+		} else if strings.HasPrefix(host, "http://") {
+			host = host[len("http://"):]
+		}
+		// Strip port
+		if idx := strings.LastIndex(host, ":"); idx != -1 {
+			host = host[:idx]
+		}
+		// Match base domain itself or any subdomain
+		if host == s.config.BaseDomain || strings.HasSuffix(host, "."+s.config.BaseDomain) {
+			return true
+		}
+	}
+
 	return false
 }
 
@@ -346,6 +370,7 @@ func tenantStore(r *http.Request) store.Store {
 	return middleware.TenantStoreFromContext(r.Context())
 }
 
+// Deprecated: use writeResult/writeList/writeMessage instead. Will be removed after full migration.
 func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(status)
@@ -354,6 +379,7 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	}
 }
 
+// Deprecated: use writeApiError with a registered error code instead. Will be removed after full migration.
 func writeError(w http.ResponseWriter, status int, msg string) {
 	writeJSON(w, status, map[string]string{"error": msg})
 }

@@ -35,11 +35,11 @@ func (h *HealthHandler) HandleHealthz(w http.ResponseWriter, r *http.Request) {
 	if err := h.db.PingContext(r.Context()); err != nil {
 		resp.Status = "degraded"
 		resp.DB = "unreachable"
-		writeJSON(w, http.StatusServiceUnavailable, resp)
+		writeResult(w, r, http.StatusServiceUnavailable, resp)
 		return
 	}
 
-	writeJSON(w, http.StatusOK, resp)
+	writeResult(w, r, http.StatusOK, resp)
 }
 
 // HandleReadyz is a readiness probe. Same logic as healthz — ready when

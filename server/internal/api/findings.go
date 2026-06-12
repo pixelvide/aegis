@@ -9,15 +9,16 @@ import (
 
 func (s *Server) handleListFindings(w http.ResponseWriter, r *http.Request) {
 	filter := store.FindingFilter{
-		ScanID:   queryParam(r, "scan_id"),
-		Severity: queryParam(r, "severity"),
-		Status:   queryParam(r, "status"),
-		CWE:      queryParam(r, "cwe"),
+		ProjectID: pathParam(r, "projectId"),
+		ScanID:    queryParam(r, "scan_id"),
+		Severity:  queryParam(r, "severity"),
+		Status:    queryParam(r, "status"),
+		CWE:       queryParam(r, "cwe"),
 	}
 
 	findings, err := tenantStore(r).ListFindings(r.Context(), filter)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to list findings")
+		writeApiError(w, r, errServerInternal)
 		return
 	}
 
@@ -32,18 +33,18 @@ func (s *Server) handleListFindings(w http.ResponseWriter, r *http.Request) {
 	if findings == nil {
 		findings = []models.Finding{}
 	}
-	writeJSON(w, http.StatusOK, findings)
+	writeResult(w, r, http.StatusOK, findings)
 }
 
 func (s *Server) handleGetFinding(w http.ResponseWriter, r *http.Request) {
 	id := pathParam(r, "id")
 	finding, err := tenantStore(r).GetFinding(r.Context(), id)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to get finding")
+		writeApiError(w, r, errServerInternal)
 		return
 	}
 	if finding == nil {
-		writeError(w, http.StatusNotFound, "finding not found")
+		writeApiError(w, r, errResourceNotFound.WithMessage("Finding not found"))
 		return
 	}
 
@@ -53,7 +54,7 @@ func (s *Server) handleGetFinding(w http.ResponseWriter, r *http.Request) {
 		finding.Exploits = exploits
 	}
 
-	writeJSON(w, http.StatusOK, finding)
+	writeResult(w, r, http.StatusOK, finding)
 }
 
 func (s *Server) handleUpdateFinding(w http.ResponseWriter, r *http.Request) {
@@ -63,7 +64,7 @@ func (s *Server) handleUpdateFinding(w http.ResponseWriter, r *http.Request) {
 		Status string `json:"status"`
 	}
 	if err := decodeJSON(r, &req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
+		writeApiError(w, r, errValidationInvalidBody)
 		return
 	}
 
@@ -74,47 +75,47 @@ func (s *Server) handleUpdateFinding(w http.ResponseWriter, r *http.Request) {
 		models.FindingFalsePositive, models.FindingWontFix:
 		// Valid
 	default:
-		writeError(w, http.StatusBadRequest, "invalid status: must be open, confirmed, fixed, false_positive, or wontfix")
+		writeApiError(w, r, errValidationFieldInvalid.WithMessage("Invalid status: must be open, confirmed, fixed, false_positive, or wontfix"))
 		return
 	}
 
 	if err := tenantStore(r).UpdateFindingStatus(r.Context(), id, status); err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to update finding")
+		writeApiError(w, r, errServerInternal)
 		return
 	}
 
 	// Return updated finding
 	finding, _ := tenantStore(r).GetFinding(r.Context(), id)
 	if finding == nil {
-		writeError(w, http.StatusNotFound, "finding not found")
+		writeApiError(w, r, errResourceNotFound.WithMessage("Finding not found"))
 		return
 	}
-	writeJSON(w, http.StatusOK, finding)
+	writeResult(w, r, http.StatusOK, finding)
 }
 
 func (s *Server) handleListExploits(w http.ResponseWriter, r *http.Request) {
 	findingID := pathParam(r, "id")
 	exploits, err := tenantStore(r).ListExploits(r.Context(), findingID)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to list exploits")
+		writeApiError(w, r, errServerInternal)
 		return
 	}
 	if exploits == nil {
 		exploits = []models.Exploit{}
 	}
-	writeJSON(w, http.StatusOK, exploits)
+	writeResult(w, r, http.StatusOK, exploits)
 }
 
 func (s *Server) handleGetExploit(w http.ResponseWriter, r *http.Request) {
 	eid := pathParam(r, "eid")
 	exploit, err := tenantStore(r).GetExploit(r.Context(), eid)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to get exploit")
+		writeApiError(w, r, errServerInternal)
 		return
 	}
 	if exploit == nil {
-		writeError(w, http.StatusNotFound, "exploit not found")
+		writeApiError(w, r, errResourceNotFound.WithMessage("Exploit not found"))
 		return
 	}
-	writeJSON(w, http.StatusOK, exploit)
+	writeResult(w, r, http.StatusOK, exploit)
 }

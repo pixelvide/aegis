@@ -15,20 +15,20 @@ import (
 func (s *Server) handleListMembers(w http.ResponseWriter, r *http.Request) {
 	org := middleware.OrgFromContext(r.Context())
 	if org == nil {
-		writeError(w, http.StatusBadRequest, "org context required")
+		writeApiError(w, r, errValidationFieldInvalid.WithMessage("org context required"))
 		return
 	}
 
 	members, err := s.common.ListOrgMembers(r.Context(), org.ID)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to list members")
+		writeApiError(w, r, errServerInternal)
 		return
 	}
 	if members == nil {
 		members = []store.MemberInfo{}
 	}
 
-	writeJSON(w, http.StatusOK, members)
+	writeResult(w, r, http.StatusOK, members)
 }
 
 type inviteRequest struct {
@@ -40,25 +40,25 @@ type inviteRequest struct {
 // Requires owner or admin role.
 func (s *Server) handleInviteMember(w http.ResponseWriter, r *http.Request) {
 	if !middleware.IsAdminOrOwner(r.Context()) {
-		writeError(w, http.StatusForbidden, "only owners and admins can invite members")
+		writeApiError(w, r, errPermissionDenied.WithMessage("only owners and admins can invite members"))
 		return
 	}
 
 	org := middleware.OrgFromContext(r.Context())
 	if org == nil {
-		writeError(w, http.StatusBadRequest, "org context required")
+		writeApiError(w, r, errValidationFieldInvalid.WithMessage("org context required"))
 		return
 	}
 
 	var req inviteRequest
 	if err := decodeJSON(r, &req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
+		writeApiError(w, r, errValidationInvalidBody)
 		return
 	}
 
 	req.Email = strings.ToLower(strings.TrimSpace(req.Email))
 	if _, err := mail.ParseAddress(req.Email); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid email address")
+		writeApiError(w, r, errValidationFieldInvalid.WithMessage("invalid email address"))
 		return
 	}
 
@@ -67,14 +67,14 @@ func (s *Server) handleInviteMember(w http.ResponseWriter, r *http.Request) {
 		role = "member"
 	}
 	if role != "owner" && role != "admin" && role != "member" && role != "viewer" {
-		writeError(w, http.StatusBadRequest, "role must be owner, admin, member, or viewer")
+		writeApiError(w, r, errValidationFieldInvalid.WithMessage("role must be owner, admin, member, or viewer"))
 		return
 	}
 
 	// Find or create the user
 	user, err := s.common.GetUserByEmail(r.Context(), req.Email)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal error")
+		writeApiError(w, r, errServerInternal)
 		return
 	}
 	if user == nil {
@@ -87,18 +87,18 @@ func (s *Server) handleInviteMember(w http.ResponseWriter, r *http.Request) {
 		hash, _ := authpkg.HashPassword("__invited__placeholder__" + req.Email)
 		user.PasswordHash = hash
 		if err := s.common.CreateUser(r.Context(), user); err != nil {
-			writeError(w, http.StatusInternalServerError, "failed to create user")
+			writeApiError(w, r, errServerInternal)
 			return
 		}
 	}
 
 	// Add to org
 	if err := s.common.AddOrgMember(r.Context(), org.ID, user.ID, role); err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to add member")
+		writeApiError(w, r, errServerInternal)
 		return
 	}
 
-	writeJSON(w, http.StatusCreated, map[string]any{
+	writeResult(w, r, http.StatusCreated, map[string]any{
 		"user_id": user.ID,
 		"email":   user.Email,
 		"role":    role,
@@ -109,31 +109,31 @@ func (s *Server) handleInviteMember(w http.ResponseWriter, r *http.Request) {
 // Requires owner or admin role.
 func (s *Server) handleRemoveMember(w http.ResponseWriter, r *http.Request) {
 	if !middleware.IsAdminOrOwner(r.Context()) {
-		writeError(w, http.StatusForbidden, "only owners and admins can remove members")
+		writeApiError(w, r, errPermissionDenied.WithMessage("only owners and admins can remove members"))
 		return
 	}
 
 	org := middleware.OrgFromContext(r.Context())
 	if org == nil {
-		writeError(w, http.StatusBadRequest, "org context required")
+		writeApiError(w, r, errValidationFieldInvalid.WithMessage("org context required"))
 		return
 	}
 
 	userID := pathParam(r, "userId")
 	if userID == "" {
-		writeError(w, http.StatusBadRequest, "user ID required")
+		writeApiError(w, r, errValidationFieldInvalid.WithMessage("user ID required"))
 		return
 	}
 
 	// Prevent removing yourself
 	currentUser := middleware.UserFromContext(r.Context())
 	if currentUser != nil && currentUser.ID == userID {
-		writeError(w, http.StatusBadRequest, "cannot remove yourself from the organization")
+		writeApiError(w, r, errValidationFieldInvalid.WithMessage("cannot remove yourself from the organization"))
 		return
 	}
 
 	if err := s.common.RemoveOrgMember(r.Context(), org.ID, userID); err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to remove member")
+		writeApiError(w, r, errServerInternal)
 		return
 	}
 

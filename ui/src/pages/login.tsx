@@ -101,11 +101,13 @@ export default function LoginPage() {
       })
 
       if (!res.ok) {
-        const data = await res.json().catch(() => ({ error: "Verification failed" }))
-        throw new Error(data.error || "Verification failed")
+        const body = await res.json().catch(() => ({ errors: [{ message: "Verification failed" }] }))
+        const msg = body.errors?.[0]?.message || body.error || "Verification failed"
+        throw new Error(msg)
       }
 
-      const data = await res.json()
+      const body = await res.json()
+      const data = body.result ?? body
       if (data.recovery_codes_remaining !== undefined && data.recovery_codes_remaining < 3) {
         console.log(`Warning: only ${data.recovery_codes_remaining} recovery codes remaining`)
       }
@@ -117,7 +119,8 @@ export default function LoginPage() {
           headers: { "Content-Type": "application/json" },
         })
         if (orgsRes.ok) {
-          const orgsData = await orgsRes.json()
+          const orgsBody = await orgsRes.json()
+          const orgsData = orgsBody.result ?? orgsBody
           const baseDomain = orgsData.base_domain
           const orgs = orgsData.orgs || []
 

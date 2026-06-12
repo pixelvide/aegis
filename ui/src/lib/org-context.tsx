@@ -9,6 +9,7 @@ interface OrgContextValue {
   loading: boolean
   refresh: () => void
   baseDomain: string
+  accessDenied: boolean
 }
 
 const OrgContext = createContext<OrgContextValue>({
@@ -18,6 +19,7 @@ const OrgContext = createContext<OrgContextValue>({
   loading: true,
   refresh: () => {},
   baseDomain: "",
+  accessDenied: false,
 })
 
 export function useOrg() {
@@ -31,21 +33,32 @@ export function OrgProvider({ children }: { children: React.ReactNode }) {
   const [currentOrg, setCurrentOrgState] = useState<Organization | null>(null)
   const [loading, setLoading] = useState(true)
   const [baseDomain, setBaseDomain] = useState("")
+  const [accessDenied, setAccessDenied] = useState(false)
 
   const selectOrg = useCallback((orgList: Organization[], domain: string) => {
     let selected: Organization | null = null
+    let onSubdomain = false
 
     // When base_domain is set, derive active org from the current subdomain
     if (domain) {
       const hostname = window.location.hostname
       if (hostname.endsWith(`.${domain}`)) {
+        onSubdomain = true
         const subdomainSlug = hostname.slice(0, -(domain.length + 1))
         selected = orgList.find(o => o.slug === subdomainSlug) || null
+
+        // On a subdomain but user is NOT a member of this org → access denied
+        if (!selected) {
+          setAccessDenied(true)
+          setBaseDomain(domain)
+          return
+        }
       }
     }
 
-    // Fallback: use localStorage (dev mode / base domain without subdomain)
-    if (!selected) {
+    // Fallback: use localStorage (header-only mode / base domain without subdomain)
+    // Only allowed when NOT on a subdomain
+    if (!selected && !onSubdomain) {
       const savedSlug = localStorage.getItem(ORG_STORAGE_KEY)
       selected = orgList.find(o => o.slug === savedSlug) || orgList[0] || null
     }
@@ -56,6 +69,7 @@ export function OrgProvider({ children }: { children: React.ReactNode }) {
       localStorage.setItem(ORG_STORAGE_KEY, selected.slug)
     }
 
+    setAccessDenied(false)
     setBaseDomain(domain)
   }, [])
 
@@ -105,7 +119,7 @@ export function OrgProvider({ children }: { children: React.ReactNode }) {
   }, [baseDomain])
 
   return (
-    <OrgContext.Provider value={{ orgs, currentOrg, switchOrg, loading, refresh: loadOrgs, baseDomain }}>
+    <OrgContext.Provider value={{ orgs, currentOrg, switchOrg, loading, refresh: loadOrgs, baseDomain, accessDenied }}>
       {children}
     </OrgContext.Provider>
   )

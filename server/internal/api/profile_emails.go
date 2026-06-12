@@ -21,20 +21,20 @@ import (
 func (s *Server) handleListEmails(w http.ResponseWriter, r *http.Request) {
 	user := middleware.UserFromContext(r.Context())
 	if user == nil {
-		writeError(w, http.StatusUnauthorized, "not authenticated")
+		writeApiError(w, r, errAuthNotAuthenticated)
 		return
 	}
 
 	emails, err := s.common.ListUserEmails(r.Context(), user.ID)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to list emails")
+		writeApiError(w, r, errServerInternal)
 		return
 	}
 	if emails == nil {
 		emails = []models.UserEmail{}
 	}
 
-	writeJSON(w, http.StatusOK, map[string]any{
+	writeResult(w, r, http.StatusOK, map[string]any{
 		"emails": emails,
 	})
 }
@@ -43,7 +43,7 @@ func (s *Server) handleListEmails(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleAddEmail(w http.ResponseWriter, r *http.Request) {
 	user := middleware.UserFromContext(r.Context())
 	if user == nil {
-		writeError(w, http.StatusUnauthorized, "not authenticated")
+		writeApiError(w, r, errAuthNotAuthenticated)
 		return
 	}
 
@@ -51,37 +51,37 @@ func (s *Server) handleAddEmail(w http.ResponseWriter, r *http.Request) {
 		Email string `json:"email"`
 	}
 	if err := decodeJSON(r, &req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
+		writeApiError(w, r, errValidationInvalidBody)
 		return
 	}
 
 	req.Email = strings.ToLower(strings.TrimSpace(req.Email))
 	if _, err := mail.ParseAddress(req.Email); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid email address")
+		writeApiError(w, r, errValidationFieldInvalid.WithMessage("invalid email address"))
 		return
 	}
 
 	// Check if email is already in use
 	existing, err := s.common.GetUserEmailByAddress(r.Context(), req.Email)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal error")
+		writeApiError(w, r, errServerInternal)
 		return
 	}
 	if existing != nil {
-		writeError(w, http.StatusConflict, "email already in use")
+		writeApiError(w, r, errResourceConflict.WithMessage("email already in use"))
 		return
 	}
 
 	email, err := s.common.AddUserEmail(r.Context(), user.ID, req.Email)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to add email")
+		writeApiError(w, r, errServerInternal)
 		return
 	}
 
 	// Auto-send verification email
 	go s.sendVerificationEmail(user.ID, email.ID, email.Email)
 
-	writeJSON(w, http.StatusCreated, map[string]any{
+	writeResult(w, r, http.StatusCreated, map[string]any{
 		"email": email,
 	})
 }
@@ -90,18 +90,18 @@ func (s *Server) handleAddEmail(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleRemoveEmail(w http.ResponseWriter, r *http.Request) {
 	user := middleware.UserFromContext(r.Context())
 	if user == nil {
-		writeError(w, http.StatusUnauthorized, "not authenticated")
+		writeApiError(w, r, errAuthNotAuthenticated)
 		return
 	}
 
 	emailID := r.PathValue("id")
 	if emailID == "" {
-		writeError(w, http.StatusBadRequest, "email ID is required")
+		writeApiError(w, r, errValidationFieldRequired.WithMessage("email ID is required"))
 		return
 	}
 
 	if err := s.common.RemoveUserEmail(r.Context(), emailID, user.ID); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+		writeApiError(w, r, errValidationFieldInvalid.WithMessage(err.Error()))
 		return
 	}
 
@@ -112,55 +112,53 @@ func (s *Server) handleRemoveEmail(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleSetPrimaryEmail(w http.ResponseWriter, r *http.Request) {
 	user := middleware.UserFromContext(r.Context())
 	if user == nil {
-		writeError(w, http.StatusUnauthorized, "not authenticated")
+		writeApiError(w, r, errAuthNotAuthenticated)
 		return
 	}
 
 	emailID := r.PathValue("id")
 	if emailID == "" {
-		writeError(w, http.StatusBadRequest, "email ID is required")
+		writeApiError(w, r, errValidationFieldRequired.WithMessage("email ID is required"))
 		return
 	}
 
 	if err := s.common.SetPrimaryEmail(r.Context(), emailID, user.ID); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+		writeApiError(w, r, errValidationFieldInvalid.WithMessage(err.Error()))
 		return
 	}
 
-	writeJSON(w, http.StatusOK, map[string]string{
-		"message": "Primary email updated",
-	})
+	writeMessage(w, r, http.StatusOK, "Primary email updated")
 }
 
 // handleSendEmailVerification sends a verification email.
 func (s *Server) handleSendEmailVerification(w http.ResponseWriter, r *http.Request) {
 	user := middleware.UserFromContext(r.Context())
 	if user == nil {
-		writeError(w, http.StatusUnauthorized, "not authenticated")
+		writeApiError(w, r, errAuthNotAuthenticated)
 		return
 	}
 
 	emailID := r.PathValue("id")
 	if emailID == "" {
-		writeError(w, http.StatusBadRequest, "email ID is required")
+		writeApiError(w, r, errValidationFieldRequired.WithMessage("email ID is required"))
 		return
 	}
 
 	emailRecord, err := s.common.GetUserEmail(r.Context(), emailID, user.ID)
 	if err != nil || emailRecord == nil {
-		writeError(w, http.StatusNotFound, "email not found")
+		writeApiError(w, r, errResourceNotFound.WithMessage("email not found"))
 		return
 	}
 
 	if emailRecord.Verified {
-		writeError(w, http.StatusConflict, "email is already verified")
+		writeApiError(w, r, errResourceConflict.WithMessage("email is already verified"))
 		return
 	}
 
 	// Generate verification token
 	tokenBytes := make([]byte, 32)
 	if _, err := rand.Read(tokenBytes); err != nil {
-		writeError(w, http.StatusInternalServerError, "internal error")
+		writeApiError(w, r, errServerInternal)
 		return
 	}
 	token := hex.EncodeToString(tokenBytes)
@@ -169,7 +167,7 @@ func (s *Server) handleSendEmailVerification(w http.ResponseWriter, r *http.Requ
 
 	// Store the token in password_reset_tokens table (reusing for email verification)
 	if err := s.common.CreatePasswordResetToken(r.Context(), user.ID, tokenHash, expiresAt); err != nil {
-		writeError(w, http.StatusInternalServerError, "internal error")
+		writeApiError(w, r, errServerInternal)
 		return
 	}
 
@@ -178,13 +176,11 @@ func (s *Server) handleSendEmailVerification(w http.ResponseWriter, r *http.Requ
 	subject, body := templates.VerifyEmail(verifyURL)
 
 	if err := s.email.Send(emailRecord.Email, subject, body); err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to send verification email")
+		writeApiError(w, r, errServerInternal)
 		return
 	}
 
-	writeJSON(w, http.StatusOK, map[string]string{
-		"message": "Verification email sent",
-	})
+	writeMessage(w, r, http.StatusOK, "Verification email sent")
 }
 
 // handleVerifyEmail verifies an email using a token.
@@ -194,12 +190,12 @@ func (s *Server) handleVerifyEmail(w http.ResponseWriter, r *http.Request) {
 		EmailID string `json:"email_id"`
 	}
 	if err := decodeJSON(r, &req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
+		writeApiError(w, r, errValidationInvalidBody)
 		return
 	}
 
 	if req.Token == "" || req.EmailID == "" {
-		writeError(w, http.StatusBadRequest, "token and email_id are required")
+		writeApiError(w, r, errValidationFieldInvalid.WithMessage("token and email_id are required"))
 		return
 	}
 
@@ -207,7 +203,7 @@ func (s *Server) handleVerifyEmail(w http.ResponseWriter, r *http.Request) {
 
 	resetToken, err := s.common.GetPasswordResetToken(r.Context(), tokenHash)
 	if err != nil || resetToken == nil {
-		writeError(w, http.StatusBadRequest, "invalid or expired verification link")
+		writeApiError(w, r, errValidationFieldInvalid.WithMessage("invalid or expired verification link"))
 		return
 	}
 
@@ -216,11 +212,9 @@ func (s *Server) handleVerifyEmail(w http.ResponseWriter, r *http.Request) {
 
 	// Mark the email as verified
 	if err := s.common.MarkUserEmailVerified(r.Context(), req.EmailID); err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to verify email")
+		writeApiError(w, r, errServerInternal)
 		return
 	}
 
-	writeJSON(w, http.StatusOK, map[string]string{
-		"message": "Email verified successfully",
-	})
+	writeMessage(w, r, http.StatusOK, "Email verified successfully")
 }

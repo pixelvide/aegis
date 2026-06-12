@@ -36,51 +36,51 @@ type loginRequest struct {
 func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 	// Check if signup is enabled
 	if !s.common.IsFeatureEnabled(r.Context(), "signup") {
-		writeError(w, http.StatusForbidden, "registration is currently disabled")
+		writeApiError(w, r, errFeatureDisabled.WithMessage("Registration is currently disabled"))
 		return
 	}
 
 	var req registerRequest
 	if err := decodeJSON(r, &req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
+		writeApiError(w, r, errValidationInvalidBody)
 		return
 	}
 
 	// Validate email
 	req.Email = strings.ToLower(strings.TrimSpace(req.Email))
 	if _, err := mail.ParseAddress(req.Email); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid email address")
+		writeApiError(w, r, errValidationFieldInvalid.WithMessage("Invalid email address"))
 		return
 	}
 
 	// Validate password strength
 	if err := validatePassword(req.Password); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+		writeApiError(w, r, errValidationFieldInvalid.WithMessage(err.Error()))
 		return
 	}
 
 	// Validate name
 	req.Name = strings.TrimSpace(req.Name)
 	if req.Name == "" {
-		writeError(w, http.StatusBadRequest, "name is required")
+		writeApiError(w, r, errValidationFieldRequired.WithMessage("Name is required"))
 		return
 	}
 
 	// Check if email already exists
 	existing, err := s.common.GetUserByEmail(r.Context(), req.Email)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal error")
+		writeApiError(w, r, errServerInternal)
 		return
 	}
 	if existing != nil {
-		writeError(w, http.StatusConflict, "email already registered")
+		writeApiError(w, r, errResourceAlreadyExists.WithMessage("Email already registered"))
 		return
 	}
 
 	// Hash password
 	hash, err := authpkg.HashPassword(req.Password)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal error")
+		writeApiError(w, r, errServerInternal)
 		return
 	}
 
@@ -92,7 +92,7 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := s.common.CreateUser(r.Context(), user); err != nil {
 		slog.Error("failed to create user", "email", req.Email, "error", err)
-		writeError(w, http.StatusInternalServerError, "failed to create user")
+		writeApiError(w, r, errServerInternal)
 		return
 	}
 	slog.Info("user registered", "user_id", user.ID, "email", req.Email)
@@ -128,17 +128,16 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 	// Generate JWT + create session
 	token, jti, err := s.auth.GenerateToken(user.ID)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to generate token")
+		writeApiError(w, r, errServerInternal)
 		return
 	}
 
 	s.createSession(r, user.ID, jti)
 	setAuthCookie(w, token, s.config)
 
-	writeJSON(w, http.StatusCreated, map[string]any{
-		"user":    user,
-		"message": "registration successful",
-	})
+	writeResultMessage(w, r, http.StatusCreated, map[string]any{
+		"user": user,
+	}, "Registration successful")
 }
 
 // handleLogin authenticates a user and returns a JWT cookie.
@@ -146,31 +145,31 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	var req loginRequest
 	if err := decodeJSON(r, &req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
+		writeApiError(w, r, errValidationInvalidBody)
 		return
 	}
 
 	req.Email = strings.ToLower(strings.TrimSpace(req.Email))
 	if req.Email == "" || req.Password == "" {
-		writeError(w, http.StatusBadRequest, "email and password are required")
+		writeApiError(w, r, errValidationFieldRequired.WithMessage("Email and password are required"))
 		return
 	}
 
 	// Look up user
 	user, err := s.common.GetUserByEmail(r.Context(), req.Email)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal error")
+		writeApiError(w, r, errServerInternal)
 		return
 	}
 	if user == nil {
 		// Use same error for missing user and wrong password (prevent enumeration)
-		writeError(w, http.StatusUnauthorized, "invalid email or password")
+		writeApiError(w, r, errAuthInvalidCredentials)
 		return
 	}
 
 	// Check password
 	if err := authpkg.CheckPassword(user.PasswordHash, req.Password); err != nil {
-		writeError(w, http.StatusUnauthorized, "invalid email or password")
+		writeApiError(w, r, errAuthInvalidCredentials)
 		return
 	}
 
@@ -186,7 +185,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		// Password correct but MFA required — issue a short-lived MFA token
 		mfaToken, err := s.auth.GenerateMFAToken(user.ID)
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "failed to generate MFA token")
+			writeApiError(w, r, errServerInternal)
 			return
 		}
 
@@ -203,7 +202,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		writeJSON(w, http.StatusOK, map[string]any{
+		writeResult(w, r, http.StatusOK, map[string]any{
 			"mfa_required": true,
 			"mfa_token":    mfaToken,
 			"mfa_methods":  methods,
@@ -215,7 +214,7 @@ issueToken:
 	// No MFA — generate full JWT + create session
 	token, jti, err := s.auth.GenerateToken(user.ID)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to generate token")
+		writeApiError(w, r, errServerInternal)
 		return
 	}
 
@@ -227,7 +226,7 @@ issueToken:
 	browser, osName, deviceType := parseUserAgent(r.UserAgent())
 	go s.sendLoginNotification(user.Email, user.Name, ip, browser, osName, deviceType)
 
-	writeJSON(w, http.StatusOK, map[string]any{
+	writeResult(w, r, http.StatusOK, map[string]any{
 		"user": user,
 	})
 }
@@ -249,14 +248,14 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 		MaxAge:   -1, // delete immediately
 		Domain:   cookieDomain(s.config),
 	})
-	writeJSON(w, http.StatusOK, map[string]string{"message": "logged out"})
+	writeMessage(w, r, http.StatusOK, "Logged out")
 }
 
 // handleMe returns the current authenticated user and their orgs.
 func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 	user := middleware.UserFromContext(r.Context())
 	if user == nil {
-		writeError(w, http.StatusUnauthorized, "not authenticated")
+		writeApiError(w, r, errAuthNotAuthenticated)
 		return
 	}
 
@@ -268,7 +267,7 @@ func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 		orgs = []models.Organization{}
 	}
 
-	writeJSON(w, http.StatusOK, map[string]any{
+	writeResult(w, r, http.StatusOK, map[string]any{
 		"user": user,
 		"orgs": orgs,
 	})

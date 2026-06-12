@@ -70,41 +70,41 @@ var (
 func (s *Server) handleAgentCreateFinding(w http.ResponseWriter, r *http.Request) {
 	var req AgentFindingRequest
 	if err := decodeJSON(r, &req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
+		writeApiError(w, r, errValidationInvalidBody)
 		return
 	}
 
 	// Validate required fields
 	if req.ProjectID == "" {
-		writeError(w, http.StatusBadRequest, "project_id is required")
+		writeApiError(w, r, errValidationFieldRequired.WithMessage("project_id is required"))
 		return
 	}
 	if req.Fingerprint == "" {
-		writeError(w, http.StatusBadRequest, "fingerprint is required")
+		writeApiError(w, r, errValidationFieldRequired.WithMessage("fingerprint is required"))
 		return
 	}
 	if len(req.Fingerprint) > 256 {
-		writeError(w, http.StatusBadRequest, "fingerprint must be 256 chars or less")
+		writeApiError(w, r, errValidationFieldInvalid.WithMessage("fingerprint must be 256 chars or less"))
 		return
 	}
 	if req.Title == "" {
-		writeError(w, http.StatusBadRequest, "title is required")
+		writeApiError(w, r, errValidationFieldRequired.WithMessage("title is required"))
 		return
 	}
 	if len(req.Title) > 500 {
-		writeError(w, http.StatusBadRequest, "title must be 500 chars or less")
+		writeApiError(w, r, errValidationFieldInvalid.WithMessage("title must be 500 chars or less"))
 		return
 	}
 	if req.Severity == "" {
-		writeError(w, http.StatusBadRequest, "severity is required")
+		writeApiError(w, r, errValidationFieldRequired.WithMessage("severity is required"))
 		return
 	}
 	if req.Description == "" {
-		writeError(w, http.StatusBadRequest, "description is required")
+		writeApiError(w, r, errValidationFieldRequired.WithMessage("description is required"))
 		return
 	}
 	if len(req.Description) > 100*1024 {
-		writeError(w, http.StatusBadRequest, "description must be 100KB or less")
+		writeApiError(w, r, errValidationFieldInvalid.WithMessage("description must be 100KB or less"))
 		return
 	}
 
@@ -113,36 +113,36 @@ func (s *Server) handleAgentCreateFinding(w http.ResponseWriter, r *http.Request
 	switch sev {
 	case models.SeverityCritical, models.SeverityHigh, models.SeverityMedium, models.SeverityLow, models.SeverityInfo:
 	default:
-		writeError(w, http.StatusBadRequest, "severity must be critical, high, medium, low, or info")
+		writeApiError(w, r, errValidationFieldInvalid.WithMessage("severity must be critical, high, medium, low, or info"))
 		return
 	}
 
 	// Validate optional CWE format
 	if req.CWE != "" && !cwePattern.MatchString(req.CWE) {
-		writeError(w, http.StatusBadRequest, "invalid CWE format, expected CWE-NNN")
+		writeApiError(w, r, errValidationFieldInvalid.WithMessage("invalid CWE format, expected CWE-NNN"))
 		return
 	}
 	// Validate optional CVE format
 	if req.CVE != "" && !cvePattern.MatchString(req.CVE) {
-		writeError(w, http.StatusBadRequest, "invalid CVE format, expected CVE-YYYY-NNNNN")
+		writeApiError(w, r, errValidationFieldInvalid.WithMessage("invalid CVE format, expected CVE-YYYY-NNNNN"))
 		return
 	}
 	// Validate CVSS score range
 	if req.CVSSScore < 0 || req.CVSSScore > 10.0 {
-		writeError(w, http.StatusBadRequest, "cvss_score must be between 0.0 and 10.0")
+		writeApiError(w, r, errValidationFieldInvalid.WithMessage("cvss_score must be between 0.0 and 10.0"))
 		return
 	}
 
 	// Sanitize file path (prevent traversal)
 	if strings.Contains(req.File, "..") {
-		writeError(w, http.StatusBadRequest, "file path must not contain '..'")
+		writeApiError(w, r, errValidationFieldInvalid.WithMessage("file path must not contain '..'"))
 		return
 	}
 
 	// Enforce token project scope
 	token := middleware.AgentTokenFromContext(r.Context())
 	if token != nil && token.ProjectID != "" && token.ProjectID != req.ProjectID {
-		writeError(w, http.StatusForbidden, "token is scoped to a different project")
+		writeApiError(w, r, errPermissionDenied.WithMessage("token is scoped to a different project"))
 		return
 	}
 
@@ -176,7 +176,7 @@ func (s *Server) handleAgentCreateFinding(w http.ResponseWriter, r *http.Request
 	// Upsert with fingerprint deduplication
 	deduplicated, err := ts.UpsertFinding(r.Context(), finding)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to save finding")
+		writeApiError(w, r, errServerInternal)
 		return
 	}
 
@@ -208,7 +208,7 @@ func (s *Server) handleAgentCreateFinding(w http.ResponseWriter, r *http.Request
 		status = http.StatusOK
 	}
 
-	writeJSON(w, status, AgentFindingResponse{
+	writeResult(w, r, status, AgentFindingResponse{
 		Finding:      finding,
 		Deduplicated: deduplicated,
 	})
@@ -217,27 +217,27 @@ func (s *Server) handleAgentCreateFinding(w http.ResponseWriter, r *http.Request
 func (s *Server) handleAgentListFindings(w http.ResponseWriter, r *http.Request) {
 	projectID := r.URL.Query().Get("project_id")
 	if projectID == "" {
-		writeError(w, http.StatusBadRequest, "project_id query parameter is required")
+		writeApiError(w, r, errValidationFieldRequired.WithMessage("project_id query parameter is required"))
 		return
 	}
 
 	// Enforce token project scope
 	token := middleware.AgentTokenFromContext(r.Context())
 	if token != nil && token.ProjectID != "" && token.ProjectID != projectID {
-		writeError(w, http.StatusForbidden, "token is scoped to a different project")
+		writeApiError(w, r, errPermissionDenied.WithMessage("token is scoped to a different project"))
 		return
 	}
 
 	ts := tenantStore(r)
 	findings, err := ts.ListFindings(r.Context(), findingFilterFromQuery(r, projectID))
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to list findings")
+		writeApiError(w, r, errServerInternal)
 		return
 	}
 	if findings == nil {
 		findings = []models.Finding{}
 	}
-	writeJSON(w, http.StatusOK, findings)
+	writeResult(w, r, http.StatusOK, findings)
 }
 
 func (s *Server) handleAgentUpdateFinding(w http.ResponseWriter, r *http.Request) {
@@ -245,14 +245,14 @@ func (s *Server) handleAgentUpdateFinding(w http.ResponseWriter, r *http.Request
 
 	var req AgentUpdateFindingRequest
 	if err := decodeJSON(r, &req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
+		writeApiError(w, r, errValidationInvalidBody)
 		return
 	}
 
 	// Agents can only set: open (reopen) or verified (confirm fix)
 	status := models.FindingStatus(req.Status)
 	if status != models.FindingOpen && status != models.FindingVerified {
-		writeError(w, http.StatusBadRequest, "agents can only set status to 'open' or 'verified'")
+		writeApiError(w, r, errValidationFieldInvalid.WithMessage("agents can only set status to 'open' or 'verified'"))
 		return
 	}
 
@@ -261,28 +261,28 @@ func (s *Server) handleAgentUpdateFinding(w http.ResponseWriter, r *http.Request
 	// Verify finding exists
 	existing, err := ts.GetFinding(r.Context(), id)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to get finding")
+		writeApiError(w, r, errServerInternal)
 		return
 	}
 	if existing == nil {
-		writeError(w, http.StatusNotFound, "finding not found")
+		writeApiError(w, r, errResourceNotFound.WithMessage("finding not found"))
 		return
 	}
 
 	// Enforce token project scope
 	token := middleware.AgentTokenFromContext(r.Context())
 	if token != nil && token.ProjectID != "" && existing.ProjectID != "" && token.ProjectID != existing.ProjectID {
-		writeError(w, http.StatusForbidden, "token is scoped to a different project")
+		writeApiError(w, r, errPermissionDenied.WithMessage("token is scoped to a different project"))
 		return
 	}
 
 	if err := ts.UpdateFindingStatus(r.Context(), id, status); err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to update finding")
+		writeApiError(w, r, errServerInternal)
 		return
 	}
 
 	existing.Status = status
-	writeJSON(w, http.StatusOK, existing)
+	writeResult(w, r, http.StatusOK, existing)
 }
 
 func (s *Server) handleAgentCreateExploit(w http.ResponseWriter, r *http.Request) {
@@ -290,24 +290,24 @@ func (s *Server) handleAgentCreateExploit(w http.ResponseWriter, r *http.Request
 
 	var req AgentExploitRequest
 	if err := decodeJSON(r, &req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
+		writeApiError(w, r, errValidationInvalidBody)
 		return
 	}
 
 	if req.Filename == "" {
-		writeError(w, http.StatusBadRequest, "filename is required")
+		writeApiError(w, r, errValidationFieldRequired.WithMessage("filename is required"))
 		return
 	}
 	if len(req.Filename) > 255 {
-		writeError(w, http.StatusBadRequest, "filename must be 255 chars or less")
+		writeApiError(w, r, errValidationFieldInvalid.WithMessage("filename must be 255 chars or less"))
 		return
 	}
 	if req.Code == "" {
-		writeError(w, http.StatusBadRequest, "code is required")
+		writeApiError(w, r, errValidationFieldRequired.WithMessage("code is required"))
 		return
 	}
 	if len(req.Code) > 500*1024 {
-		writeError(w, http.StatusBadRequest, "code must be 500KB or less")
+		writeApiError(w, r, errValidationFieldInvalid.WithMessage("code must be 500KB or less"))
 		return
 	}
 
@@ -316,18 +316,18 @@ func (s *Server) handleAgentCreateExploit(w http.ResponseWriter, r *http.Request
 	// Verify finding exists
 	existing, err := ts.GetFinding(r.Context(), findingID)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to get finding")
+		writeApiError(w, r, errServerInternal)
 		return
 	}
 	if existing == nil {
-		writeError(w, http.StatusNotFound, "finding not found")
+		writeApiError(w, r, errResourceNotFound.WithMessage("finding not found"))
 		return
 	}
 
 	// Enforce token project scope
 	token := middleware.AgentTokenFromContext(r.Context())
 	if token != nil && token.ProjectID != "" && existing.ProjectID != "" && token.ProjectID != existing.ProjectID {
-		writeError(w, http.StatusForbidden, "token is scoped to a different project")
+		writeApiError(w, r, errPermissionDenied.WithMessage("token is scoped to a different project"))
 		return
 	}
 
@@ -340,11 +340,11 @@ func (s *Server) handleAgentCreateExploit(w http.ResponseWriter, r *http.Request
 	}
 
 	if err := ts.CreateExploit(r.Context(), exploit); err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to create exploit")
+		writeApiError(w, r, errServerInternal)
 		return
 	}
 
-	writeJSON(w, http.StatusCreated, exploit)
+	writeResult(w, r, http.StatusCreated, exploit)
 }
 
 // ─── Token Management (user-facing) ─────────────────────────────────────────
@@ -365,23 +365,23 @@ type CreateTokenResponse struct {
 func (s *Server) handleCreateToken(w http.ResponseWriter, r *http.Request) {
 	var req CreateTokenRequest
 	if err := decodeJSON(r, &req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
+		writeApiError(w, r, errValidationInvalidBody)
 		return
 	}
 
 	if req.Name == "" {
-		writeError(w, http.StatusBadRequest, "name is required")
+		writeApiError(w, r, errValidationFieldRequired.WithMessage("name is required"))
 		return
 	}
 	if len(req.Name) > 100 {
-		writeError(w, http.StatusBadRequest, "name must be 100 chars or less")
+		writeApiError(w, r, errValidationFieldInvalid.WithMessage("name must be 100 chars or less"))
 		return
 	}
 
 	// Generate 32 random hex bytes → "aegis_<hex>"
 	rawBytes := make([]byte, 16)
 	if _, err := rand.Read(rawBytes); err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to generate token")
+		writeApiError(w, r, errServerInternal)
 		return
 	}
 	plaintext := "aegis_" + hex.EncodeToString(rawBytes)
@@ -389,7 +389,7 @@ func (s *Server) handleCreateToken(w http.ResponseWriter, r *http.Request) {
 	// bcrypt hash (cost 12)
 	hash, err := bcrypt.GenerateFromPassword([]byte(plaintext), 12)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to hash token")
+		writeApiError(w, r, errServerInternal)
 		return
 	}
 
@@ -415,11 +415,11 @@ func (s *Server) handleCreateToken(w http.ResponseWriter, r *http.Request) {
 
 	ts := tenantStore(r)
 	if err := ts.CreateAPIToken(r.Context(), token, string(hash)); err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to create token")
+		writeApiError(w, r, errServerInternal)
 		return
 	}
 
-	writeJSON(w, http.StatusCreated, CreateTokenResponse{
+	writeResult(w, r, http.StatusCreated, CreateTokenResponse{
 		Token: plaintext,
 		Info:  *token,
 	})
@@ -429,20 +429,20 @@ func (s *Server) handleListTokens(w http.ResponseWriter, r *http.Request) {
 	ts := tenantStore(r)
 	tokens, err := ts.ListAPITokens(r.Context())
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to list tokens")
+		writeApiError(w, r, errServerInternal)
 		return
 	}
 	if tokens == nil {
 		tokens = []models.APIToken{}
 	}
-	writeJSON(w, http.StatusOK, tokens)
+	writeResult(w, r, http.StatusOK, tokens)
 }
 
 func (s *Server) handleRevokeToken(w http.ResponseWriter, r *http.Request) {
 	id := pathParam(r, "id")
 	ts := tenantStore(r)
 	if err := ts.RevokeAPIToken(r.Context(), id); err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to revoke token")
+		writeApiError(w, r, errServerInternal)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)

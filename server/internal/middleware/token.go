@@ -44,13 +44,13 @@ func TokenAuth(common *store.CommonStore, cfg *config.Config) func(http.Handler)
 			// 1. Extract Bearer token
 			authHeader := r.Header.Get("Authorization")
 			if authHeader == "" {
-				http.Error(w, `{"error":"authorization header required"}`, http.StatusUnauthorized)
+				writeMiddlewareError(w, r, errTokenAuthRequired)
 				return
 			}
 
 			const bearerPrefix = "Bearer "
 			if !strings.HasPrefix(authHeader, bearerPrefix) {
-				http.Error(w, `{"error":"invalid authorization format, use: Bearer <token>"}`, http.StatusUnauthorized)
+				writeMiddlewareError(w, r, errTokenInvalidFormat)
 				return
 			}
 
@@ -59,7 +59,7 @@ func TokenAuth(common *store.CommonStore, cfg *config.Config) func(http.Handler)
 
 			// Validate token format: aegis_ + 32 hex chars
 			if !isValidTokenFormat(rawToken) {
-				http.Error(w, `{"error":"invalid token format"}`, http.StatusUnauthorized)
+				writeMiddlewareError(w, r, errTokenInvalidFormat)
 				return
 			}
 
@@ -99,11 +99,11 @@ func TokenAuth(common *store.CommonStore, cfg *config.Config) func(http.Handler)
 			// If domain resolved the org, reject conflicting headers
 			if resolvedFromDomain && org != nil {
 				if headerID := r.Header.Get("X-Org-ID"); headerID != "" && headerID != org.ID {
-					http.Error(w, `{"error":"X-Org-ID header conflicts with subdomain"}`, http.StatusBadRequest)
+					writeMiddlewareError(w, r, errTenantHeaderConflictID)
 					return
 				}
 				if headerSlug := r.Header.Get("X-Org-Slug"); headerSlug != "" && headerSlug != org.Slug {
-					http.Error(w, `{"error":"X-Org-Slug header conflicts with subdomain"}`, http.StatusBadRequest)
+					writeMiddlewareError(w, r, errTenantHeaderConflictSlug)
 					return
 				}
 			}
@@ -118,11 +118,11 @@ func TokenAuth(common *store.CommonStore, cfg *config.Config) func(http.Handler)
 			}
 
 			if err != nil {
-				http.Error(w, `{"error":"internal error resolving organization"}`, http.StatusInternalServerError)
+				writeMiddlewareError(w, r, errServerInternal)
 				return
 			}
 			if org == nil {
-				http.Error(w, `{"error":"organization not found"}`, http.StatusUnauthorized)
+				writeMiddlewareError(w, r, errTenantOrgNotFoundAuth)
 				return
 			}
 
@@ -133,23 +133,23 @@ func TokenAuth(common *store.CommonStore, cfg *config.Config) func(http.Handler)
 			prefix := rawToken[:tokenPrefixLen]
 			token, hash, err := tenantStore.GetAPITokenByPrefix(r.Context(), prefix)
 			if err != nil {
-				http.Error(w, `{"error":"internal error checking token"}`, http.StatusInternalServerError)
+				writeMiddlewareError(w, r, errServerInternal)
 				return
 			}
 			if token == nil {
-				http.Error(w, `{"error":"invalid or revoked token"}`, http.StatusUnauthorized)
+				writeMiddlewareError(w, r, errTokenInvalid)
 				return
 			}
 
 			// 5. Check expiration
 			if token.ExpiresAt != nil && token.ExpiresAt.Before(time.Now().UTC()) {
-				http.Error(w, `{"error":"token has expired"}`, http.StatusUnauthorized)
+				writeMiddlewareError(w, r, errTokenExpired)
 				return
 			}
 
 			// 6. Verify token against bcrypt hash
 			if err := bcrypt.CompareHashAndPassword([]byte(hash), []byte(rawToken)); err != nil {
-				http.Error(w, `{"error":"invalid token"}`, http.StatusUnauthorized)
+				writeMiddlewareError(w, r, errTokenInvalidVerify)
 				return
 			}
 

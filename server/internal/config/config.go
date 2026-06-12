@@ -30,7 +30,8 @@ type Config struct {
 	// Empty = no subdomain resolution (use X-Org-Slug header instead).
 	BaseDomain string
 
-	// AllowedOrigins for CORS. Default: http://localhost:5173 (Vite dev server).
+	// AllowedOrigins for CORS. Default: http://lvh.me:8080 (Docker dev).
+	// When BaseDomain is set, any subdomain origin is auto-allowed.
 	AllowedOrigins []string
 
 	// BaseURL is the public-facing URL of the app (used for email links).
@@ -69,7 +70,7 @@ func Load() (*Config, error) {
 	cfg := &Config{
 		Port:           8080,
 		Bind:           "127.0.0.1",
-		AllowedOrigins: []string{"http://localhost:5173"},
+		AllowedOrigins: []string{"http://lvh.me:8080"},
 		BaseURL:        "http://localhost:8080",
 		SMTP: SMTPConfig{
 			Host: "localhost",
@@ -110,6 +111,16 @@ func Load() (*Config, error) {
 
 	if baseURL := os.Getenv("APP_BASE_URL"); baseURL != "" {
 		cfg.BaseURL = strings.TrimRight(baseURL, "/")
+	} else if cfg.BaseDomain != "" {
+		// Auto-derive BaseURL from BaseDomain when APP_BASE_URL is not set.
+		// This ensures email links use the correct domain in development.
+		if cfg.Port == 443 {
+			cfg.BaseURL = fmt.Sprintf("https://%s", cfg.BaseDomain)
+		} else if cfg.Port == 80 {
+			cfg.BaseURL = fmt.Sprintf("http://%s", cfg.BaseDomain)
+		} else {
+			cfg.BaseURL = fmt.Sprintf("http://%s:%d", cfg.BaseDomain, cfg.Port)
+		}
 	}
 
 	// SMTP

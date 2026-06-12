@@ -21,8 +21,9 @@ export default function ForgotPasswordPage() {
         body: JSON.stringify({ email }),
       })
       if (!res.ok) {
-        const data = await res.json().catch(() => ({ error: "Request failed" }))
-        throw new Error(data.error || "Request failed")
+        const body = await res.json().catch(() => ({ errors: [{ message: "Request failed" }] }))
+        const msg = body.errors?.[0]?.message || body.error || "Request failed"
+        throw new Error(msg)
       }
       setSent(true)
     } catch (err: unknown) {

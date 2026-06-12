@@ -21,21 +21,21 @@ import (
 func (s *Server) handleListMFADevices(w http.ResponseWriter, r *http.Request) {
 	user := middleware.UserFromContext(r.Context())
 	if user == nil {
-		writeError(w, http.StatusUnauthorized, "not authenticated")
+		writeApiError(w, r, errAuthNotAuthenticated)
 		return
 	}
 
 	devices, err := s.common.ListMFADevices(r.Context(), user.ID)
 	if err != nil {
 		slog.Error("failed to list MFA devices", "user_id", user.ID, "error", err)
-		writeError(w, http.StatusInternalServerError, "failed to list devices")
+		writeApiError(w, r, errServerInternal)
 		return
 	}
 	if devices == nil {
 		devices = []models.MFADevice{}
 	}
 
-	writeJSON(w, http.StatusOK, map[string]any{
+	writeResult(w, r, http.StatusOK, map[string]any{
 		"devices":     devices,
 		"mfa_enabled": user.MFAEnabled,
 	})
@@ -45,7 +45,7 @@ func (s *Server) handleListMFADevices(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleAddTOTPDevice(w http.ResponseWriter, r *http.Request) {
 	user := middleware.UserFromContext(r.Context())
 	if user == nil {
-		writeError(w, http.StatusUnauthorized, "not authenticated")
+		writeApiError(w, r, errAuthNotAuthenticated)
 		return
 	}
 
@@ -53,7 +53,7 @@ func (s *Server) handleAddTOTPDevice(w http.ResponseWriter, r *http.Request) {
 		Name string `json:"name"`
 	}
 	if err := decodeJSON(r, &req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
+		writeApiError(w, r, errValidationInvalidBody)
 		return
 	}
 	req.Name = strings.TrimSpace(req.Name)
@@ -65,7 +65,7 @@ func (s *Server) handleAddTOTPDevice(w http.ResponseWriter, r *http.Request) {
 	key, err := authpkg.GenerateTOTP(user.Email)
 	if err != nil {
 		slog.Error("failed to generate TOTP key", "user_id", user.ID, "error", err)
-		writeError(w, http.StatusInternalServerError, "failed to generate TOTP key")
+		writeApiError(w, r, errServerInternal)
 		return
 	}
 
@@ -78,29 +78,28 @@ func (s *Server) handleAddTOTPDevice(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := s.common.CreateMFADevice(r.Context(), device); err != nil {
 		slog.Error("failed to create MFA device", "user_id", user.ID, "type", "totp", "error", err)
-		writeError(w, http.StatusInternalServerError, "failed to create device")
+		writeApiError(w, r, errServerInternal)
 		return
 	}
 
-	writeJSON(w, http.StatusCreated, map[string]any{
-		"device":  device,
-		"secret":  key.Secret(),
-		"url":     key.URL(),
-		"message": "Scan the QR code with your authenticator app, then verify with a code",
-	})
+	writeResultMessage(w, r, http.StatusCreated, map[string]any{
+		"device": device,
+		"secret": key.Secret(),
+		"url":    key.URL(),
+	}, "Scan the QR code with your authenticator app, then verify with a code")
 }
 
 // handleVerifyTOTPDevice verifies a TOTP device with a 6-digit code.
 func (s *Server) handleVerifyTOTPDevice(w http.ResponseWriter, r *http.Request) {
 	user := middleware.UserFromContext(r.Context())
 	if user == nil {
-		writeError(w, http.StatusUnauthorized, "not authenticated")
+		writeApiError(w, r, errAuthNotAuthenticated)
 		return
 	}
 
 	deviceID := r.PathValue("id")
 	if deviceID == "" {
-		writeError(w, http.StatusBadRequest, "device ID is required")
+		writeApiError(w, r, errValidationFieldRequired.WithMessage("Device ID is required"))
 		return
 	}
 
@@ -108,59 +107,57 @@ func (s *Server) handleVerifyTOTPDevice(w http.ResponseWriter, r *http.Request) 
 		Code string `json:"code"`
 	}
 	if err := decodeJSON(r, &req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
+		writeApiError(w, r, errValidationInvalidBody)
 		return
 	}
 	req.Code = strings.TrimSpace(req.Code)
 	if req.Code == "" {
-		writeError(w, http.StatusBadRequest, "code is required")
+		writeApiError(w, r, errValidationFieldRequired.WithMessage("Code is required"))
 		return
 	}
 
 	device, err := s.common.GetMFADevice(r.Context(), deviceID, user.ID)
 	if err != nil {
 		slog.Error("failed to get MFA device", "device_id", deviceID, "user_id", user.ID, "error", err)
-		writeError(w, http.StatusNotFound, "device not found")
+		writeApiError(w, r, errResourceNotFound.WithMessage("Device not found"))
 		return
 	}
 	if device == nil {
-		writeError(w, http.StatusNotFound, "device not found")
+		writeApiError(w, r, errResourceNotFound.WithMessage("Device not found"))
 		return
 	}
 
 	if device.Type != "totp" {
-		writeError(w, http.StatusBadRequest, "device is not a TOTP device")
+		writeApiError(w, r, errValidationFieldInvalid.WithMessage("Device is not a TOTP device"))
 		return
 	}
 
 	if device.Verified {
-		writeError(w, http.StatusConflict, "device is already verified")
+		writeApiError(w, r, errResourceConflict.WithMessage("Device is already verified"))
 		return
 	}
 
 	// Validate the TOTP code against the device's secret
 	if !authpkg.ValidateTOTP(device.Secret, req.Code) {
-		writeError(w, http.StatusBadRequest, "invalid code — make sure your authenticator is synced")
+		writeApiError(w, r, errAuthMFAInvalidCode.WithMessage("Invalid code — make sure your authenticator is synced"))
 		return
 	}
 
 	if err := s.common.VerifyMFADevice(r.Context(), device.ID); err != nil {
 		slog.Error("failed to verify MFA device", "device_id", device.ID, "user_id", user.ID, "error", err)
-		writeError(w, http.StatusInternalServerError, "failed to verify device")
+		writeApiError(w, r, errServerInternal)
 		return
 	}
 	slog.Info("TOTP device verified", "device_id", device.ID, "user_id", user.ID)
 
-	writeJSON(w, http.StatusOK, map[string]string{
-		"message": "TOTP device verified successfully",
-	})
+	writeMessage(w, r, http.StatusOK, "TOTP device verified successfully")
 }
 
 // handleAddEmailMFADevice creates an email OTP MFA device.
 func (s *Server) handleAddEmailMFADevice(w http.ResponseWriter, r *http.Request) {
 	user := middleware.UserFromContext(r.Context())
 	if user == nil {
-		writeError(w, http.StatusUnauthorized, "not authenticated")
+		writeApiError(w, r, errAuthNotAuthenticated)
 		return
 	}
 
@@ -168,12 +165,12 @@ func (s *Server) handleAddEmailMFADevice(w http.ResponseWriter, r *http.Request)
 		EmailID string `json:"email_id"` // ID from user_emails table
 	}
 	if err := decodeJSON(r, &req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
+		writeApiError(w, r, errValidationInvalidBody)
 		return
 	}
 
 	if req.EmailID == "" {
-		writeError(w, http.StatusBadRequest, "email_id is required")
+		writeApiError(w, r, errValidationFieldRequired.WithMessage("Email ID is required"))
 		return
 	}
 
@@ -181,15 +178,15 @@ func (s *Server) handleAddEmailMFADevice(w http.ResponseWriter, r *http.Request)
 	email, err := s.common.GetUserEmail(r.Context(), req.EmailID, user.ID)
 	if err != nil {
 		slog.Error("failed to get user email for MFA device", "email_id", req.EmailID, "user_id", user.ID, "error", err)
-		writeError(w, http.StatusNotFound, "email not found")
+		writeApiError(w, r, errResourceNotFound.WithMessage("Email not found"))
 		return
 	}
 	if email == nil {
-		writeError(w, http.StatusNotFound, "email not found")
+		writeApiError(w, r, errResourceNotFound.WithMessage("Email not found"))
 		return
 	}
 	if !email.Verified {
-		writeError(w, http.StatusBadRequest, "email must be verified before using for MFA")
+		writeApiError(w, r, errValidationFieldInvalid.WithMessage("Email must be verified before using for MFA"))
 		return
 	}
 
@@ -202,35 +199,34 @@ func (s *Server) handleAddEmailMFADevice(w http.ResponseWriter, r *http.Request)
 	}
 	if err := s.common.CreateMFADevice(r.Context(), device); err != nil {
 		slog.Error("failed to create email MFA device", "user_id", user.ID, "email", email.Email, "error", err)
-		writeError(w, http.StatusInternalServerError, "failed to create device")
+		writeApiError(w, r, errServerInternal)
 		return
 	}
 
 	// Auto-verify since the email itself is already verified
 	if err := s.common.VerifyMFADevice(r.Context(), device.ID); err != nil {
 		slog.Error("failed to auto-verify email MFA device", "device_id", device.ID, "user_id", user.ID, "error", err)
-		writeError(w, http.StatusInternalServerError, "failed to verify device")
+		writeApiError(w, r, errServerInternal)
 		return
 	}
 	slog.Info("email MFA device added", "device_id", device.ID, "user_id", user.ID, "email", email.Email)
 
-	writeJSON(w, http.StatusCreated, map[string]any{
-		"device":  device,
-		"message": "Email MFA device added",
-	})
+	writeResultMessage(w, r, http.StatusCreated, map[string]any{
+		"device": device,
+	}, "Email MFA device added")
 }
 
 // handleVerifyEmailMFADevice verifies an email MFA device with an OTP code.
 func (s *Server) handleVerifyEmailMFADevice(w http.ResponseWriter, r *http.Request) {
 	user := middleware.UserFromContext(r.Context())
 	if user == nil {
-		writeError(w, http.StatusUnauthorized, "not authenticated")
+		writeApiError(w, r, errAuthNotAuthenticated)
 		return
 	}
 
 	deviceID := r.PathValue("id")
 	if deviceID == "" {
-		writeError(w, http.StatusBadRequest, "device ID is required")
+		writeApiError(w, r, errValidationFieldRequired.WithMessage("Device ID is required"))
 		return
 	}
 
@@ -238,7 +234,7 @@ func (s *Server) handleVerifyEmailMFADevice(w http.ResponseWriter, r *http.Reque
 		Code string `json:"code"`
 	}
 	if err := decodeJSON(r, &req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
+		writeApiError(w, r, errValidationInvalidBody)
 		return
 	}
 	req.Code = strings.TrimSpace(req.Code)
@@ -246,16 +242,16 @@ func (s *Server) handleVerifyEmailMFADevice(w http.ResponseWriter, r *http.Reque
 	device, err := s.common.GetMFADevice(r.Context(), deviceID, user.ID)
 	if err != nil {
 		slog.Error("failed to get MFA device for email verify", "device_id", deviceID, "user_id", user.ID, "error", err)
-		writeError(w, http.StatusNotFound, "device not found")
+		writeApiError(w, r, errResourceNotFound.WithMessage("Device not found"))
 		return
 	}
 	if device == nil {
-		writeError(w, http.StatusNotFound, "device not found")
+		writeApiError(w, r, errResourceNotFound.WithMessage("Device not found"))
 		return
 	}
 
 	if device.Type != "email" {
-		writeError(w, http.StatusBadRequest, "device is not an email device")
+		writeApiError(w, r, errValidationFieldInvalid.WithMessage("Device is not an email device"))
 		return
 	}
 
@@ -264,39 +260,37 @@ func (s *Server) handleVerifyEmailMFADevice(w http.ResponseWriter, r *http.Reque
 	valid, err := s.common.ValidateEmailOTP(r.Context(), user.ID, device.ID, codeHash)
 	if err != nil {
 		slog.Error("failed to validate email OTP", "device_id", device.ID, "user_id", user.ID, "error", err)
-		writeError(w, http.StatusBadRequest, "invalid or expired code")
+		writeApiError(w, r, errAuthMFAInvalidCode.WithMessage("Invalid or expired code"))
 		return
 	}
 	if !valid {
 		slog.Warn("invalid email OTP attempt", "device_id", device.ID, "user_id", user.ID)
-		writeError(w, http.StatusBadRequest, "invalid or expired code")
+		writeApiError(w, r, errAuthMFAInvalidCode.WithMessage("Invalid or expired code"))
 		return
 	}
 
 	if !device.Verified {
 		if err := s.common.VerifyMFADevice(r.Context(), device.ID); err != nil {
 			slog.Error("failed to verify email MFA device after OTP", "device_id", device.ID, "user_id", user.ID, "error", err)
-			writeError(w, http.StatusInternalServerError, "failed to verify device")
+			writeApiError(w, r, errServerInternal)
 			return
 		}
 	}
 
-	writeJSON(w, http.StatusOK, map[string]string{
-		"message": "Email MFA device verified",
-	})
+	writeMessage(w, r, http.StatusOK, "Email MFA device verified")
 }
 
 // handleRemoveMFADevice removes an MFA device (password required).
 func (s *Server) handleRemoveMFADevice(w http.ResponseWriter, r *http.Request) {
 	user := middleware.UserFromContext(r.Context())
 	if user == nil {
-		writeError(w, http.StatusUnauthorized, "not authenticated")
+		writeApiError(w, r, errAuthNotAuthenticated)
 		return
 	}
 
 	deviceID := r.PathValue("id")
 	if deviceID == "" {
-		writeError(w, http.StatusBadRequest, "device ID is required")
+		writeApiError(w, r, errValidationFieldRequired.WithMessage("Device ID is required"))
 		return
 	}
 
@@ -304,22 +298,22 @@ func (s *Server) handleRemoveMFADevice(w http.ResponseWriter, r *http.Request) {
 		Password string `json:"password"`
 	}
 	if err := decodeJSON(r, &req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
+		writeApiError(w, r, errValidationInvalidBody)
 		return
 	}
 	if req.Password == "" {
-		writeError(w, http.StatusBadRequest, "password is required")
+		writeApiError(w, r, errValidationFieldRequired.WithMessage("Password is required"))
 		return
 	}
 
 	if err := authpkg.CheckPassword(user.PasswordHash, req.Password); err != nil {
-		writeError(w, http.StatusUnauthorized, "incorrect password")
+		writeApiError(w, r, errAuthInvalidCredentials.WithMessage("Incorrect password"))
 		return
 	}
 
 	if err := s.common.RemoveMFADevice(r.Context(), deviceID, user.ID); err != nil {
 		slog.Error("failed to remove MFA device", "device_id", deviceID, "user_id", user.ID, "error", err)
-		writeError(w, http.StatusInternalServerError, "failed to remove device")
+		writeApiError(w, r, errServerInternal)
 		return
 	}
 	slog.Info("MFA device removed", "device_id", deviceID, "user_id", user.ID)
@@ -336,7 +330,7 @@ func (s *Server) handleRemoveMFADevice(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	writeJSON(w, http.StatusOK, map[string]any{
+	writeResult(w, r, http.StatusOK, map[string]any{
 		"message":           "MFA device removed",
 		"mfa_auto_disabled": mfaAutoDisabled,
 	})
@@ -348,12 +342,12 @@ func (s *Server) handleRemoveMFADevice(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleEnableMFA(w http.ResponseWriter, r *http.Request) {
 	user := middleware.UserFromContext(r.Context())
 	if user == nil {
-		writeError(w, http.StatusUnauthorized, "not authenticated")
+		writeApiError(w, r, errAuthNotAuthenticated)
 		return
 	}
 
 	if user.MFAEnabled {
-		writeError(w, http.StatusConflict, "MFA is already enabled")
+		writeApiError(w, r, errResourceConflict.WithMessage("MFA is already enabled"))
 		return
 	}
 
@@ -361,19 +355,19 @@ func (s *Server) handleEnableMFA(w http.ResponseWriter, r *http.Request) {
 	hasDevice, err := s.common.HasVerifiedMFADevice(r.Context(), user.ID)
 	if err != nil {
 		slog.Error("failed to check verified MFA devices", "user_id", user.ID, "error", err)
-		writeError(w, http.StatusInternalServerError, "internal error")
+		writeApiError(w, r, errServerInternal)
 		return
 	}
 
 	if !hasDevice {
-		writeError(w, http.StatusBadRequest, "add and verify at least one TOTP authenticator device first")
+		writeApiError(w, r, errValidationFieldInvalid.WithMessage("Add and verify at least one TOTP authenticator device first"))
 		return
 	}
 
 	// Generate 8 recovery codes
 	plainCodes, err := authpkg.GenerateRecoveryCodes(8)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to generate recovery codes")
+		writeApiError(w, r, errServerInternal)
 		return
 	}
 
@@ -381,25 +375,25 @@ func (s *Server) handleEnableMFA(w http.ResponseWriter, r *http.Request) {
 	for i, code := range plainCodes {
 		h, err := authpkg.HashPassword(code)
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "internal error")
+			writeApiError(w, r, errServerInternal)
 			return
 		}
 		hashes[i] = h
 	}
 
 	if err := s.common.CreateRecoveryCodes(r.Context(), user.ID, hashes); err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to store recovery codes")
+		writeApiError(w, r, errServerInternal)
 		return
 	}
 
 	if err := s.common.EnableMFA(r.Context(), user.ID); err != nil {
 		slog.Error("failed to enable MFA", "user_id", user.ID, "error", err)
-		writeError(w, http.StatusInternalServerError, "failed to enable MFA")
+		writeApiError(w, r, errServerInternal)
 		return
 	}
 	slog.Info("MFA enabled", "user_id", user.ID)
 
-	writeJSON(w, http.StatusOK, map[string]any{
+	writeResult(w, r, http.StatusOK, map[string]any{
 		"message":        "MFA has been enabled",
 		"recovery_codes": plainCodes,
 	})
@@ -409,12 +403,12 @@ func (s *Server) handleEnableMFA(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleDisableMFA(w http.ResponseWriter, r *http.Request) {
 	user := middleware.UserFromContext(r.Context())
 	if user == nil {
-		writeError(w, http.StatusUnauthorized, "not authenticated")
+		writeApiError(w, r, errAuthNotAuthenticated)
 		return
 	}
 
 	if !user.MFAEnabled {
-		writeError(w, http.StatusBadRequest, "MFA is not enabled")
+		writeApiError(w, r, errValidationFieldInvalid.WithMessage("MFA is not enabled"))
 		return
 	}
 
@@ -422,29 +416,27 @@ func (s *Server) handleDisableMFA(w http.ResponseWriter, r *http.Request) {
 		Password string `json:"password"`
 	}
 	if err := decodeJSON(r, &req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
+		writeApiError(w, r, errValidationInvalidBody)
 		return
 	}
 	if req.Password == "" {
-		writeError(w, http.StatusBadRequest, "password is required")
+		writeApiError(w, r, errValidationFieldRequired.WithMessage("Password is required"))
 		return
 	}
 
 	if err := authpkg.CheckPassword(user.PasswordHash, req.Password); err != nil {
-		writeError(w, http.StatusUnauthorized, "incorrect password")
+		writeApiError(w, r, errAuthInvalidCredentials.WithMessage("Incorrect password"))
 		return
 	}
 
 	if err := s.common.DisableMFA(r.Context(), user.ID); err != nil {
 		slog.Error("failed to disable MFA", "user_id", user.ID, "error", err)
-		writeError(w, http.StatusInternalServerError, "failed to disable MFA")
+		writeApiError(w, r, errServerInternal)
 		return
 	}
 	slog.Info("MFA disabled", "user_id", user.ID)
 
-	writeJSON(w, http.StatusOK, map[string]string{
-		"message": "MFA has been disabled",
-	})
+	writeMessage(w, r, http.StatusOK, "MFA has been disabled")
 }
 
 // ─── Recovery Codes ─────────────────────────────────────────────────────────
@@ -453,17 +445,17 @@ func (s *Server) handleDisableMFA(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleRecoveryCodesCount(w http.ResponseWriter, r *http.Request) {
 	user := middleware.UserFromContext(r.Context())
 	if user == nil {
-		writeError(w, http.StatusUnauthorized, "not authenticated")
+		writeApiError(w, r, errAuthNotAuthenticated)
 		return
 	}
 
 	count, err := s.common.CountUnusedRecoveryCodes(r.Context(), user.ID)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal error")
+		writeApiError(w, r, errServerInternal)
 		return
 	}
 
-	writeJSON(w, http.StatusOK, map[string]any{
+	writeResult(w, r, http.StatusOK, map[string]any{
 		"remaining": count,
 		"total":     8,
 	})
@@ -473,12 +465,12 @@ func (s *Server) handleRecoveryCodesCount(w http.ResponseWriter, r *http.Request
 func (s *Server) handleRegenerateRecoveryCodes(w http.ResponseWriter, r *http.Request) {
 	user := middleware.UserFromContext(r.Context())
 	if user == nil {
-		writeError(w, http.StatusUnauthorized, "not authenticated")
+		writeApiError(w, r, errAuthNotAuthenticated)
 		return
 	}
 
 	if !user.MFAEnabled {
-		writeError(w, http.StatusBadRequest, "MFA must be enabled to regenerate recovery codes")
+		writeApiError(w, r, errValidationFieldInvalid.WithMessage("MFA must be enabled to regenerate recovery codes"))
 		return
 	}
 
@@ -486,22 +478,22 @@ func (s *Server) handleRegenerateRecoveryCodes(w http.ResponseWriter, r *http.Re
 		Password string `json:"password"`
 	}
 	if err := decodeJSON(r, &req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
+		writeApiError(w, r, errValidationInvalidBody)
 		return
 	}
 	if req.Password == "" {
-		writeError(w, http.StatusBadRequest, "password is required")
+		writeApiError(w, r, errValidationFieldRequired.WithMessage("Password is required"))
 		return
 	}
 
 	if err := authpkg.CheckPassword(user.PasswordHash, req.Password); err != nil {
-		writeError(w, http.StatusUnauthorized, "incorrect password")
+		writeApiError(w, r, errAuthInvalidCredentials.WithMessage("Incorrect password"))
 		return
 	}
 
 	plainCodes, err := authpkg.GenerateRecoveryCodes(8)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal error")
+		writeApiError(w, r, errServerInternal)
 		return
 	}
 
@@ -509,18 +501,18 @@ func (s *Server) handleRegenerateRecoveryCodes(w http.ResponseWriter, r *http.Re
 	for i, code := range plainCodes {
 		h, err := authpkg.HashPassword(code)
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "internal error")
+			writeApiError(w, r, errServerInternal)
 			return
 		}
 		hashes[i] = h
 	}
 
 	if err := s.common.CreateRecoveryCodes(r.Context(), user.ID, hashes); err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to store recovery codes")
+		writeApiError(w, r, errServerInternal)
 		return
 	}
 
-	writeJSON(w, http.StatusOK, map[string]any{
+	writeResult(w, r, http.StatusOK, map[string]any{
 		"recovery_codes": plainCodes,
 		"message":        "Recovery codes regenerated. Old codes are now invalid.",
 	})
@@ -537,14 +529,14 @@ func (s *Server) handleMFAValidate(w http.ResponseWriter, r *http.Request) {
 		IsRecovery bool   `json:"is_recovery"`
 	}
 	if err := decodeJSON(r, &req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
+		writeApiError(w, r, errValidationInvalidBody)
 		return
 	}
 
 	req.MFAToken = strings.TrimSpace(req.MFAToken)
 	req.Code = strings.TrimSpace(req.Code)
 	if req.MFAToken == "" || req.Code == "" {
-		writeError(w, http.StatusBadRequest, "mfa_token and code are required")
+		writeApiError(w, r, errValidationFieldRequired.WithMessage("MFA token and code are required"))
 		return
 	}
 
@@ -552,19 +544,19 @@ func (s *Server) handleMFAValidate(w http.ResponseWriter, r *http.Request) {
 	userID, err := s.auth.ValidateMFAToken(req.MFAToken)
 	if err != nil {
 		slog.Warn("invalid or expired MFA token during validation", "error", err)
-		writeError(w, http.StatusUnauthorized, "invalid or expired MFA token")
+		writeApiError(w, r, errAuthMFAInvalidCode.WithMessage("Invalid or expired MFA token"))
 		return
 	}
 
 	user, err := s.common.GetUser(r.Context(), userID)
 	if err != nil {
 		slog.Error("failed to get user during MFA validation", "user_id", userID, "error", err)
-		writeError(w, http.StatusUnauthorized, "user not found")
+		writeApiError(w, r, errAuthNotAuthenticated.WithMessage("User not found"))
 		return
 	}
 	if user == nil {
 		slog.Warn("user not found during MFA validation", "user_id", userID)
-		writeError(w, http.StatusUnauthorized, "user not found")
+		writeApiError(w, r, errAuthNotAuthenticated.WithMessage("User not found"))
 		return
 	}
 
@@ -573,7 +565,7 @@ func (s *Server) handleMFAValidate(w http.ResponseWriter, r *http.Request) {
 		matched := s.tryRecoveryCode(r, user.ID, req.Code)
 		if !matched {
 			slog.Warn("invalid recovery code attempt", "user_id", user.ID)
-			writeError(w, http.StatusUnauthorized, "invalid recovery code")
+			writeApiError(w, r, errAuthMFAInvalidCode.WithMessage("Invalid recovery code"))
 			return
 		}
 	} else if req.DeviceID != "" {
@@ -581,12 +573,12 @@ func (s *Server) handleMFAValidate(w http.ResponseWriter, r *http.Request) {
 		device, err := s.common.GetMFADevice(r.Context(), req.DeviceID, user.ID)
 		if err != nil {
 			slog.Error("failed to get MFA device during login validation", "device_id", req.DeviceID, "user_id", user.ID, "error", err)
-			writeError(w, http.StatusUnauthorized, "invalid device")
+			writeApiError(w, r, errAuthMFAInvalidCode.WithMessage("Invalid device"))
 			return
 		}
 		if device == nil || !device.Verified {
 			slog.Warn("MFA device not found or not verified during login", "device_id", req.DeviceID, "user_id", user.ID)
-			writeError(w, http.StatusUnauthorized, "invalid device")
+			writeApiError(w, r, errAuthMFAInvalidCode.WithMessage("Invalid device"))
 			return
 		}
 
@@ -594,7 +586,7 @@ func (s *Server) handleMFAValidate(w http.ResponseWriter, r *http.Request) {
 		case "totp":
 			if !authpkg.ValidateTOTP(device.Secret, req.Code) {
 				slog.Warn("invalid TOTP code during login", "device_id", device.ID, "user_id", user.ID)
-				writeError(w, http.StatusUnauthorized, "invalid TOTP code")
+				writeApiError(w, r, errAuthMFAInvalidCode.WithMessage("Invalid TOTP code"))
 				return
 			}
 		case "email":
@@ -602,23 +594,23 @@ func (s *Server) handleMFAValidate(w http.ResponseWriter, r *http.Request) {
 			valid, err := s.common.ValidateEmailOTP(r.Context(), user.ID, device.ID, codeHash)
 			if err != nil {
 				slog.Error("failed to validate email OTP during login", "device_id", device.ID, "user_id", user.ID, "error", err)
-				writeError(w, http.StatusUnauthorized, "invalid or expired email code")
+				writeApiError(w, r, errAuthMFAInvalidCode.WithMessage("Invalid or expired email code"))
 				return
 			}
 			if !valid {
 				slog.Warn("invalid email OTP during login", "device_id", device.ID, "user_id", user.ID)
-				writeError(w, http.StatusUnauthorized, "invalid or expired email code")
+				writeApiError(w, r, errAuthMFAInvalidCode.WithMessage("Invalid or expired email code"))
 				return
 			}
 		default:
-			writeError(w, http.StatusBadRequest, "unsupported device type")
+			writeApiError(w, r, errValidationFieldInvalid.WithMessage("Unsupported device type"))
 			return
 		}
 
 		// Update last used
 		_ = s.common.UpdateMFADeviceLastUsed(r.Context(), device.ID)
 	} else {
-		writeError(w, http.StatusBadRequest, "device_id is required")
+		writeApiError(w, r, errValidationFieldRequired.WithMessage("Device ID is required"))
 		return
 	}
 
@@ -628,7 +620,7 @@ func (s *Server) handleMFAValidate(w http.ResponseWriter, r *http.Request) {
 	token, jti, err := s.auth.GenerateToken(user.ID)
 	if err != nil {
 		slog.Error("failed to generate token after MFA validation", "user_id", user.ID, "error", err)
-		writeError(w, http.StatusInternalServerError, "failed to generate token")
+		writeApiError(w, r, errServerInternal)
 		return
 	}
 
@@ -648,7 +640,7 @@ func (s *Server) handleMFAValidate(w http.ResponseWriter, r *http.Request) {
 		response["recovery_codes_remaining"] = remaining
 	}
 
-	writeJSON(w, http.StatusOK, response)
+	writeResult(w, r, http.StatusOK, response)
 }
 
 // handleSendEmailOTP sends an OTP code to an email MFA device during login.
@@ -658,32 +650,32 @@ func (s *Server) handleSendEmailOTP(w http.ResponseWriter, r *http.Request) {
 		DeviceID string `json:"device_id"`
 	}
 	if err := decodeJSON(r, &req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
+		writeApiError(w, r, errValidationInvalidBody)
 		return
 	}
 
 	if req.MFAToken == "" || req.DeviceID == "" {
-		writeError(w, http.StatusBadRequest, "mfa_token and device_id are required")
+		writeApiError(w, r, errValidationFieldRequired.WithMessage("MFA token and device ID are required"))
 		return
 	}
 
 	userID, err := s.auth.ValidateMFAToken(req.MFAToken)
 	if err != nil {
 		slog.Warn("invalid or expired MFA token for email OTP send", "error", err)
-		writeError(w, http.StatusUnauthorized, "invalid or expired MFA token")
+		writeApiError(w, r, errAuthMFAInvalidCode.WithMessage("Invalid or expired MFA token"))
 		return
 	}
 
 	device, err := s.common.GetMFADevice(r.Context(), req.DeviceID, userID)
 	if err != nil {
 		slog.Error("failed to get MFA device for email OTP send", "device_id", req.DeviceID, "user_id", userID, "error", err)
-		writeError(w, http.StatusNotFound, "email MFA device not found")
+		writeApiError(w, r, errResourceNotFound.WithMessage("Email MFA device not found"))
 		return
 	}
 	if device == nil || !device.Verified || device.Type != "email" {
 		slog.Warn("email MFA device not found or invalid", "device_id", req.DeviceID, "user_id", userID,
 			"found", device != nil, "verified", device != nil && device.Verified, "type", func() string { if device != nil { return device.Type } else { return "nil" } }())
-		writeError(w, http.StatusNotFound, "email MFA device not found")
+		writeApiError(w, r, errResourceNotFound.WithMessage("Email MFA device not found"))
 		return
 	}
 
@@ -691,7 +683,7 @@ func (s *Server) handleSendEmailOTP(w http.ResponseWriter, r *http.Request) {
 	code, err := generateOTP(6)
 	if err != nil {
 		slog.Error("failed to generate email OTP code", "user_id", userID, "error", err)
-		writeError(w, http.StatusInternalServerError, "failed to generate code")
+		writeApiError(w, r, errServerInternal)
 		return
 	}
 
@@ -700,7 +692,7 @@ func (s *Server) handleSendEmailOTP(w http.ResponseWriter, r *http.Request) {
 
 	if err := s.common.CreateEmailOTP(r.Context(), userID, device.ID, codeHash, expiresAt); err != nil {
 		slog.Error("failed to store email OTP in database", "user_id", userID, "device_id", device.ID, "error", err)
-		writeError(w, http.StatusInternalServerError, "failed to store OTP")
+		writeApiError(w, r, errServerInternal)
 		return
 	}
 
@@ -709,14 +701,12 @@ func (s *Server) handleSendEmailOTP(w http.ResponseWriter, r *http.Request) {
 	subject, body := templates.MFACode(code)
 	if err := s.email.Send(device.Email, subject, body); err != nil {
 		slog.Error("failed to send email OTP", "user_id", userID, "device_id", device.ID, "email", device.Email, "error", err)
-		writeError(w, http.StatusInternalServerError, "failed to send email")
+		writeApiError(w, r, errServerInternal)
 		return
 	}
 
 	slog.Info("email OTP sent successfully", "user_id", userID, "device_id", device.ID, "email", maskEmail(device.Email))
-	writeJSON(w, http.StatusOK, map[string]string{
-		"message": "Verification code sent to " + maskEmail(device.Email),
-	})
+	writeMessage(w, r, http.StatusOK, "Verification code sent to "+maskEmail(device.Email))
 }
 
 // ─── MFA Helpers ────────────────────────────────────────────────────────────

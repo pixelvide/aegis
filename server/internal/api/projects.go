@@ -16,12 +16,12 @@ type createProjectRequest struct {
 func (s *Server) handleCreateProject(w http.ResponseWriter, r *http.Request) {
 	var req createProjectRequest
 	if err := decodeJSON(r, &req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
+		writeApiError(w, r, errValidationInvalidBody)
 		return
 	}
 
 	if req.Name == "" {
-		writeError(w, http.StatusBadRequest, "name is required")
+		writeApiError(w, r, errValidationFieldRequired.WithMessage("Name is required"))
 		return
 	}
 
@@ -30,7 +30,7 @@ func (s *Server) handleCreateProject(w http.ResponseWriter, r *http.Request) {
 		slug = store.SanitizeSlug(req.Name)
 	}
 	if len(slug) < 2 {
-		writeError(w, http.StatusBadRequest, "slug must be at least 2 characters")
+		writeApiError(w, r, errValidationFieldInvalid.WithMessage("Slug must be at least 2 characters"))
 		return
 	}
 
@@ -41,24 +41,24 @@ func (s *Server) handleCreateProject(w http.ResponseWriter, r *http.Request) {
 
 	ts := tenantStore(r)
 	if err := ts.CreateProject(r.Context(), project); err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to create project: "+err.Error())
+		writeApiError(w, r, errServerInternal)
 		return
 	}
 
-	writeJSON(w, http.StatusCreated, project)
+	writeResult(w, r, http.StatusCreated, project)
 }
 
 // handleListProjects returns all projects in the current org.
 func (s *Server) handleListProjects(w http.ResponseWriter, r *http.Request) {
 	projects, err := tenantStore(r).ListProjects(r.Context())
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to list projects")
+		writeApiError(w, r, errServerInternal)
 		return
 	}
 	if projects == nil {
 		projects = []models.Project{}
 	}
-	writeJSON(w, http.StatusOK, projects)
+	writeResult(w, r, http.StatusOK, projects)
 }
 
 // handleGetProject returns a project by slug.
@@ -66,12 +66,12 @@ func (s *Server) handleGetProject(w http.ResponseWriter, r *http.Request) {
 	slug := pathParam(r, "slug")
 	project, err := tenantStore(r).GetProjectBySlug(r.Context(), slug)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to get project")
+		writeApiError(w, r, errServerInternal)
 		return
 	}
 	if project == nil {
-		writeError(w, http.StatusNotFound, "project not found")
+		writeApiError(w, r, errResourceNotFound.WithMessage("Project not found"))
 		return
 	}
-	writeJSON(w, http.StatusOK, project)
+	writeResult(w, r, http.StatusOK, project)
 }

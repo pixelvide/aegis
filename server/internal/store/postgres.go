@@ -136,16 +136,23 @@ func (p *Postgres) GetScan(ctx context.Context, id string) (*models.Scan, error)
 	return scan, nil
 }
 
-func (p *Postgres) ListScans(ctx context.Context) ([]models.Scan, error) {
+func (p *Postgres) ListScans(ctx context.Context, projectID string) ([]models.Scan, error) {
 	q := fmt.Sprintf(`SELECT
 		id, name, target_type, target_path, target_url, target_ref,
 		persona, mode, status, prompt, agent_pid, conversation_id,
 		workspace_path, finding_count,
 		sum_total, sum_critical, sum_high, sum_medium, sum_low, sum_info,
 		error_message, created_at, started_at, completed_at
-	FROM %s ORDER BY created_at DESC`, p.t("scans"))
+	FROM %s`, p.t("scans"))
 
-	rows, err := p.db.QueryContext(ctx, q)
+	var args []any
+	if projectID != "" {
+		q += " WHERE project_id = $1::uuid"
+		args = append(args, projectID)
+	}
+	q += " ORDER BY created_at DESC"
+
+	rows, err := p.db.QueryContext(ctx, q, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -403,12 +410,26 @@ func (p *Postgres) GetExploit(ctx context.Context, id string) (*models.Exploit, 
 
 // ─── Dashboard ──────────────────────────────────────────────────────────────
 
-func (p *Postgres) GetDashboardStats(ctx context.Context) (*DashboardStats, error) {
+func (p *Postgres) GetDashboardStats(ctx context.Context, projectID string) (*DashboardStats, error) {
 	stats := &DashboardStats{}
 
-	p.db.QueryRowContext(ctx, fmt.Sprintf("SELECT COUNT(*) FROM %s", p.t("scans"))).Scan(&stats.TotalScans)
-	p.db.QueryRowContext(ctx, fmt.Sprintf("SELECT COUNT(*) FROM %s WHERE status IN ('pending', 'running')", p.t("scans"))).Scan(&stats.ActiveScans)
-	p.db.QueryRowContext(ctx, fmt.Sprintf("SELECT COUNT(*) FROM %s", p.t("findings"))).Scan(&stats.TotalFindings)
+	scanWhere := ""
+	findingWhere := ""
+	var args []any
+	if projectID != "" {
+		scanWhere = "WHERE project_id = $1::uuid"
+		findingWhere = "WHERE project_id = $1::uuid"
+		args = append(args, projectID)
+	}
+
+	activeScanWhere := "WHERE status IN ('pending', 'running')"
+	if projectID != "" {
+		activeScanWhere += " AND project_id = $1::uuid"
+	}
+
+	p.db.QueryRowContext(ctx, fmt.Sprintf("SELECT COUNT(*) FROM %s %s", p.t("scans"), scanWhere), args...).Scan(&stats.TotalScans)
+	p.db.QueryRowContext(ctx, fmt.Sprintf("SELECT COUNT(*) FROM %s %s", p.t("scans"), activeScanWhere), args...).Scan(&stats.ActiveScans)
+	p.db.QueryRowContext(ctx, fmt.Sprintf("SELECT COUNT(*) FROM %s %s", p.t("findings"), findingWhere), args...).Scan(&stats.TotalFindings)
 
 	breakdownQ := fmt.Sprintf(`SELECT
 		COALESCE(SUM(CASE WHEN severity = 'critical' THEN 1 ELSE 0 END), 0),
@@ -416,8 +437,8 @@ func (p *Postgres) GetDashboardStats(ctx context.Context) (*DashboardStats, erro
 		COALESCE(SUM(CASE WHEN severity = 'medium' THEN 1 ELSE 0 END), 0),
 		COALESCE(SUM(CASE WHEN severity = 'low' THEN 1 ELSE 0 END), 0),
 		COALESCE(SUM(CASE WHEN severity = 'info' THEN 1 ELSE 0 END), 0)
-	FROM %s`, p.t("findings"))
-	p.db.QueryRowContext(ctx, breakdownQ).Scan(
+	FROM %s %s`, p.t("findings"), findingWhere)
+	p.db.QueryRowContext(ctx, breakdownQ, args...).Scan(
 		&stats.SeverityBreakdown.Critical,
 		&stats.SeverityBreakdown.High,
 		&stats.SeverityBreakdown.Medium,
@@ -426,7 +447,7 @@ func (p *Postgres) GetDashboardStats(ctx context.Context) (*DashboardStats, erro
 	)
 	stats.SeverityBreakdown.Total = stats.TotalFindings
 
-	recent, err := p.ListFindings(ctx, FindingFilter{})
+	recent, err := p.ListFindings(ctx, FindingFilter{ProjectID: projectID})
 	if err == nil && len(recent) > 10 {
 		recent = recent[:10]
 	}

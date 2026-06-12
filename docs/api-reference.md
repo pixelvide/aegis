@@ -1,6 +1,6 @@
 # API Reference
 
-Base URL: `http://localhost:8080/api/v1`
+Base URL: `http://lvh.me:8080/api/v1` (development) or `https://your-domain.com/api/v1` (production)
 
 ## Authentication
 
@@ -11,6 +11,109 @@ Org-scoped endpoints additionally require `X-Org-ID` or `X-Org-Slug` header (or 
 ### Agent Auth (Bearer Token)
 Agent Ingest API endpoints use `Authorization: Bearer aegis_xxx` tokens instead of cookies.  
 Org context is resolved from subdomain or `X-Org-Slug` header.
+
+---
+
+## Response Format
+
+All API responses use a **Cloudflare-style envelope**. Every response includes `success` (boolean) and `request_id` (trace ID for debugging).
+
+### Success — Single Resource
+
+```json
+{
+  "success": true,
+  "request_id": "req_019eb9d04166f69d...",
+  "result": {
+    "id": "uuid",
+    "name": "Example"
+  }
+}
+```
+
+### Success — With Message
+
+Action confirmations (register, login, logout, password reset, etc.) include an optional `message`:
+
+```json
+{
+  "success": true,
+  "request_id": "req_...",
+  "result": { "user": {...} },
+  "message": "Registration successful"
+}
+```
+
+### Success — Message Only
+
+For operations with no data payload (logout, password changed, etc.):
+
+```json
+{
+  "success": true,
+  "request_id": "req_...",
+  "message": "Logged out"
+}
+```
+
+### Success — Paginated List
+
+```json
+{
+  "success": true,
+  "request_id": "req_...",
+  "result": [{...}, {...}],
+  "result_info": {
+    "page": 1,
+    "per_page": 25,
+    "total": 142,
+    "total_pages": 6,
+    "has_next": true,
+    "has_prev": false
+  }
+}
+```
+
+### Error
+
+Errors return `success: false` with a structured `errors` array:
+
+```json
+{
+  "success": false,
+  "request_id": "req_019eb9d0a040...",
+  "errors": [
+    {
+      "type": "auth_error",
+      "code": "invalid_credentials",
+      "ref": "E10002",
+      "message": "Invalid email or password"
+    }
+  ]
+}
+```
+
+Each error has:
+
+| Field | Description |
+|---|---|
+| `type` | Error category: `auth_error`, `token_error`, `tenant_error`, `resource_error`, `validation_error`, `permission_error`, `rate_limit_error`, `server_error` |
+| `code` | Machine-readable error code (stable contract for programmatic handling) |
+| `ref` | Numeric reference ID (e.g., `E10002`) for support tickets and log correlation |
+| `message` | Human-readable description (may change — do not match on this) |
+| `details` | *(optional)* Field-level validation errors: `[{"field": "email", "message": "invalid format"}]` |
+
+### Empty (204 No Content)
+
+DELETE operations return `204 No Content` with no body.
+
+### Request ID
+
+Every response includes:
+- `request_id` field in the JSON body
+- `X-Request-ID` response header
+
+Use this for debugging: search server logs with `grep req_019eb9d0a040 server.log` to find the full request context.
 
 ---
 

@@ -1,6 +1,6 @@
 # Aegis Roadmap
 
-Last updated: 2026-06-11
+Last updated: 2026-06-12
 
 This document tracks planned features, improvements, and technical debt for the Aegis platform. Items are organized by priority and grouped into phases.
 
@@ -591,350 +591,58 @@ Hardening features for session integrity, threat detection, and token lifecycle.
 
 | Item | Description | Priority |
 |---|---|---|
-| **Standardized API response format** | No consistent response envelope — each endpoint invents its own shape; no pagination on list endpoints | 🔴 Critical |
-| **Structured error codes** | All API errors return `{"error": "message"}` — no machine-readable codes for programmatic handling | 🔴 Critical |
+| ~~Standardized API response format~~ | ~~No consistent response envelope — each endpoint invents its own shape; no pagination on list endpoints~~ | ✅ Completed |
+| ~~Structured error codes~~ | ~~All API errors return `{"error": "message"}` — no machine-readable codes for programmatic handling~~ | ✅ Completed |
 | Error boundaries | No React error boundaries — unhandled errors crash the whole app | 🟡 Medium |
 | Loading states | Some pages show raw empty states before data loads | 🟢 Low |
 | Test suite | No unit tests or integration tests exist | 🟡 Medium |
 | Rate limiting | No rate limiting on auth or agent ingest endpoints | 🟡 Medium |
 | OpenAPI spec update | Swagger spec needs agent ingest + token endpoints added | 🟡 Medium |
 | Feature flag consistency | Migrate all feature-gated behavior to use the two-tier flag system (global + org) | 🟡 Medium |
-| **Request trace IDs** | No request ID generated per request — logs, errors, and API responses can't be correlated for debugging | 🔴 Critical |
+| ~~Request trace IDs~~ | ~~No request ID generated per request — logs, errors, and API responses can't be correlated for debugging~~ | ✅ Completed |
 
 ### Standardized API Response Envelope & Pagination
-- **Status:** Not started
+- **Status:** ✅ Completed (2026-06-12)
 - **Priority:** 🔴 Critical
-- **Description:** Every API endpoint currently returns a different response shape — some return raw models, some wrap in ad-hoc `map[string]any`, some return raw arrays, and list endpoints have zero pagination. This makes the UI fragile (every endpoint needs custom parsing) and list endpoints will break at scale. The API needs a single, consistent response envelope for all success responses, plus cursor/offset pagination for all list endpoints.
-
-- **Current inconsistencies:**
-
-  | Endpoint | Current Response | Problem |
-  |---|---|---|
-  | `GET /findings` | `[{...}, {...}]` | Raw array, no pagination |
-  | `GET /orgs` | `{"orgs": [...], "base_domain": "..."}` | Ad-hoc wrapper with extra fields |
-  | `GET /auth/me` | `{"user": {...}, "orgs": [...]}` | Different ad-hoc wrapper |
-  | `POST /auth/register` | `{"user": {...}, "message": "..."}` | Mixed data + status message |
-  | `POST /auth/login` (MFA) | `{"mfa_required": true, "mfa_token": "...", "mfa_methods": [...]}` | Completely custom |
-  | `GET /projects` | `[{...}]` | Raw array, no metadata |
-  | `POST /tokens` | `{"token": "...", "info": {...}}` | Custom struct |
-  | `POST /auth/logout` | `{"message": "logged out"}` | Message-only, no data |
-  | `DELETE /tokens/{id}` | *(empty body, 204)* | No body at all |
-
-- **Standard response format (proposed):**
-
-  **Single resource:**
-  ```json
-  {
-    "data": {
-      "id": "uuid",
-      "name": "Example"
-    }
-  }
-  ```
-
-  **List (paginated):**
-  ```json
-  {
-    "data": [
-      {"id": "uuid-1", "title": "XSS in login"},
-      {"id": "uuid-2", "title": "SQL injection"}
-    ],
-    "pagination": {
-      "page": 1,
-      "per_page": 25,
-      "total": 142,
-      "total_pages": 6,
-      "has_next": true,
-      "has_prev": false
-    }
-  }
-  ```
-
-  **Action/mutation result (login, logout, password reset, etc.):**
-  ```json
-  {
-    "data": { "user": {...} },
-    "message": "Registration successful"
-  }
-  ```
-
-  **Error (see Structured Error Codes section below):**
-  ```json
-  {
-    "error": "ERROR_CODE",
-    "message": "Human-readable description"
-  }
-  ```
-
-  **Empty (204 No Content):** No body — unchanged.
-
-- **Pagination design:**
-
-  | Parameter | Type | Default | Description |
-  |---|---|---|---|
-  | `page` | query int | `1` | Page number (1-indexed) |
-  | `per_page` | query int | `25` | Items per page (max 100) |
-  | `sort` | query string | varies | Sort field (e.g., `created_at`, `severity`) |
-  | `order` | query string | `desc` | Sort direction: `asc` or `desc` |
-
-  **Endpoints requiring pagination:**
-  - `GET /findings` — most critical, can grow to thousands per org
-  - `GET /scans` — moderate growth
-  - `GET /projects` — low volume but should be consistent
-  - `GET /members` — low volume but should be consistent
-  - `GET /tokens` — low volume but should be consistent
-  - `GET /agent/findings` — agent API, can be high volume
-  - `GET /profile/sessions` — low volume
-  - `GET /profile/emails` — very low volume, pagination optional
-
-  **Cursor-based pagination (future):** For real-time data (audit logs, notifications), add cursor-based pagination using `cursor` + `limit` parameters. Not needed for v1.
-
-- **Backend changes (Go server):**
-  1. **New response helpers in `api/response.go`:**
-     ```go
-     // writeData wraps a single resource in {"data": ...}
-     func writeData(w http.ResponseWriter, status int, data any)
-     
-     // writeDataMessage wraps a resource with a message: {"data": ..., "message": "..."}
-     func writeDataMessage(w http.ResponseWriter, status int, data any, msg string)
-     
-     // writeList wraps a paginated list: {"data": [...], "pagination": {...}}
-     func writeList(w http.ResponseWriter, data any, pagination Pagination)
-     
-     // writMessage wraps a simple message: {"message": "..."}
-     func writeMessage(w http.ResponseWriter, status int, msg string)
-     ```
-  2. **Pagination struct and query parser:**
-     ```go
-     type Pagination struct {
-         Page       int  `json:"page"`
-         PerPage    int  `json:"per_page"`
-         Total      int  `json:"total"`
-         TotalPages int  `json:"total_pages"`
-         HasNext    bool `json:"has_next"`
-         HasPrev    bool `json:"has_prev"`
-     }
-     
-     func parsePagination(r *http.Request) (page, perPage int)
-     ```
-  3. **Store layer changes:** Add `COUNT(*)` queries alongside list queries, or use `COUNT(*) OVER()` window function for single-query pagination. Update `Store` interface methods to accept pagination params and return `(items, total, error)`.
-  4. **Migrate all handlers:** Replace `writeJSON(w, status, rawData)` → `writeData(w, status, rawData)` for single resources, and `writeJSON(w, status, items)` → `writeList(w, items, pagination)` for lists.
-  5. **Keep `writeJSON` as internal:** Retained for health checks and other non-API responses that don't need enveloping.
-
-- **Frontend changes (React UI):**
-  1. **Update `request()` helper** to unwrap `data` field from responses:
-     ```typescript
-     // Generic request that auto-unwraps the envelope
-     async function request<T>(path: string, options?: RequestInit): Promise<T> {
-       const res = await fetch(...);
-       const body = await res.json();
-       return body.data as T;  // unwrap envelope
-     }
-     
-     // For paginated lists
-     async function requestList<T>(path: string, params?: PaginationParams): Promise<PaginatedResponse<T>> {
-       // returns { data: T[], pagination: {...} }
-     }
-     ```
-  2. **Add pagination types:**
-     ```typescript
-     interface Pagination {
-       page: number;
-       per_page: number;
-       total: number;
-       total_pages: number;
-       has_next: boolean;
-       has_prev: boolean;
-     }
-     
-     interface PaginatedResponse<T> {
-       data: T[];
-       pagination: Pagination;
-     }
-     ```
-  3. **Create shared `<PaginationControls>` component** — page navigation, per-page selector, total count display. Reusable across Findings, Scans, Projects, Members pages.
-  4. **Update all list pages** to use `requestList()` and render pagination controls.
-
-- **Migration strategy:**
-  - **Phase 1:** Add new response helpers (`writeData`, `writeList`, etc.) alongside existing `writeJSON`. Migrate endpoints one file at a time.
-  - **Phase 2:** Update UI `request()` to detect enveloped responses (check for `data` key) and unwrap, while falling back to raw response for not-yet-migrated endpoints.
-  - **Phase 3:** Add pagination to `GET /findings` first (highest volume), then roll out to other list endpoints.
-  - **Phase 4:** Remove old `writeJSON` calls from API handlers once all endpoints are migrated.
-
-- **Rules (to add to AGENTS.md after implementation):**
-  1. All success responses MUST use the standard envelope (`writeData`, `writeList`, `writeDataMessage`, or `writeMessage`). Direct `writeJSON` is only for non-API responses (health checks, metrics).
-  2. All list endpoints MUST support pagination via `page` and `per_page` query parameters.
-  3. List endpoints MUST return empty arrays (`[]`), never `null`, in the `data` field.
-  4. Single-resource endpoints return the resource directly inside `data`, not wrapped in another named key (e.g., `{"data": {"id": "..."}}`, not `{"data": {"user": {"id": "..."}}}`).
-  5. The `message` field in success responses is optional and used only for action confirmations (login, logout, password reset, etc.).
-  6. `204 No Content` responses (DELETE operations) have no body — do not envelope these.
-  7. Maximum `per_page` is 100. Default is 25. Values outside range are clamped, not rejected.
+- **Description:** All API endpoints now use a Cloudflare-style response envelope with consistent success/error formatting.
+- **Implemented:**
+  - Standard success envelope: `{"success": true, "request_id": "req_...", "result": {...}}`
+  - Standard error envelope: `{"success": false, "request_id": "req_...", "errors": [{"type": "...", "code": "...", "ref": "E...", "message": "..."}]}`
+  - Helpers: `writeResult`, `writeResultMessage`, `writeList`, `writeMessage`, `writeApiError`, `writeValidationErrors`
+  - Pagination infrastructure: `ResultInfo` struct, `parseResultInfo` query parser, `writeList` for paginated responses
+  - Frontend: `ApiError` class, automatic envelope unwrapping in `request()`, `requestList()` helper
+  - All ~250 handler call sites migrated from legacy `writeJSON`/`writeError` to new helpers
+  - Legacy `writeJSON`/`writeError` functions deprecated (no callers remain)
+- **Not yet implemented:**
+  - Store-level pagination (paginated SQL queries with `COUNT(*) OVER()`) — deferred, infrastructure is ready
+  - `go generate` codegen script for error registry — deferred
 
 ### Structured Error Codes
-- **Status:** Not started
+- **Status:** ✅ Completed (2026-06-12)
 - **Priority:** 🔴 Critical
-- **Description:** Replace all `{"error": "message"}` responses with structured `{"error": "ERROR_CODE", "message": "Human-readable description"}` format. Currently, `writeError()` returns only a human-readable string, forcing the UI to string-match on error messages — which is fragile, breaks on wording changes, and blocks i18n. Two endpoints already use codes (`email_not_verified`, `auth_base_domain_only`), proving the pattern works, but the rest of the API (~200+ call sites) uses plain strings.
-
-- **Error response format (new):**
-  ```json
-  {
-    "error": "INVALID_CREDENTIALS",
-    "message": "Invalid email or password"
-  }
-  ```
-  For validation errors with field-level detail:
-  ```json
-  {
-    "error": "VALIDATION_ERROR",
-    "message": "Invalid request",
-    "details": [
-      {"field": "email", "message": "invalid email address"},
-      {"field": "password", "message": "must be at least 8 characters"}
-    ]
-  }
-  ```
-
-- **Error code categories (namespaced by domain):**
-
-  | Category | Codes | Used By |
-  |---|---|---|
-  | **Auth** | `AUTH_NOT_AUTHENTICATED`, `AUTH_INVALID_CREDENTIALS`, `AUTH_EMAIL_NOT_VERIFIED`, `AUTH_MFA_REQUIRED`, `AUTH_MFA_INVALID_CODE`, `AUTH_SESSION_REVOKED`, `AUTH_BASE_DOMAIN_ONLY` | Login, registration, MFA flows |
-  | **Token** | `TOKEN_INVALID`, `TOKEN_EXPIRED`, `TOKEN_REVOKED`, `TOKEN_SCOPE_MISMATCH` | Agent API, token auth |
-  | **Tenant** | `TENANT_NOT_FOUND`, `TENANT_NOT_MEMBER`, `TENANT_SLUG_TAKEN`, `TENANT_SLUG_RESERVED` | Org resolution, org creation |
-  | **Resource** | `RESOURCE_NOT_FOUND`, `RESOURCE_CONFLICT`, `RESOURCE_ALREADY_EXISTS` | CRUD on findings, projects, members, etc. |
-  | **Validation** | `VALIDATION_ERROR`, `INVALID_REQUEST_BODY`, `FIELD_REQUIRED`, `FIELD_TOO_LONG`, `FIELD_INVALID_FORMAT` | All input validation |
-  | **Permission** | `PERMISSION_DENIED`, `FEATURE_DISABLED`, `MFA_REQUIRED_BY_ORG` | RBAC, feature flags, org policies |
-  | **Rate Limit** | `RATE_LIMIT_EXCEEDED` | Future rate limiting |
-  | **Server** | `INTERNAL_ERROR`, `SERVICE_UNAVAILABLE` | Catch-all for 500s |
-
-- **Backend changes (Go server):**
-  1. Define error codes as constants in a new `api/errors.go` file
-  2. Change `writeError(w, status, msg)` signature to `writeError(w, status, code, msg)` — breaking change, update all ~200 call sites
-  3. Add `writeValidationError(w, details)` helper for field-level errors
-  4. Update middleware (Auth, TenantResolver, TokenAuth) to use codes
-  5. Ensure codes are included in structured logging (`slog`) for grep-ability
-  6. Update OpenAPI spec to document error codes per endpoint
-
-- **Frontend changes (React UI):**
-  1. Update `request()` helper in `lib/api.ts` to parse `error` as code and `message` as display text
-  2. Create an `errorCodes.ts` constants file mirroring the server codes
-  3. Replace string-matching error checks with code-based switches
-  4. Show error-specific UI (e.g., `AUTH_EMAIL_NOT_VERIFIED` → verification banner, `AUTH_MFA_REQUIRED` → MFA challenge, `FEATURE_DISABLED` → upgrade prompt)
-  5. Use `message` field for user-facing toasts/alerts
-
-- **Migration strategy:**
-  - Backward-compatible: the `error` field still exists, just now contains a code instead of a message. The new `message` field provides the human-readable text.
-  - UI can check for the presence of `message` to detect the new format and fall back to `error` as the display text for any old-format responses during rollout.
-
-- **Rules (to add to AGENTS.md after implementation):**
-  1. Every `writeError()` call MUST include an error code constant — never pass a raw string as the code.
-  2. Error codes are UPPER_SNAKE_CASE and namespaced by domain (e.g., `AUTH_`, `TENANT_`, `VALIDATION_`).
-  3. Error messages are human-readable and MAY change — codes are the stable contract.
-  4. New error scenarios MUST define a new code — never reuse an existing code for a different meaning.
-  5. All error codes MUST be documented in the OpenAPI spec.
+- **Description:** All API errors now return structured error codes with type, code, reference ID, and message.
+- **Implemented:**
+  - Master error registry: `errors.yaml` (single source of truth)
+  - Go error constants: `server/internal/api/errors.go` (30+ pre-defined `ApiError` constants)
+  - TypeScript error constants: `ui/src/lib/error-codes.gen.ts` (matching frontend constants)
+  - Error code categories: `auth_error` (E1xxxx), `token_error` (E2xxxx), `tenant_error` (E3xxxx), `resource_error` (E4xxxx), `validation_error` (E5xxxx), `permission_error` (E6xxxx), `rate_limit_error` (E7xxxx), `server_error` (E9xxxx)
+  - `WithMessage()` and `WithDetails()` builder methods on `ApiError`
+  - Field-level validation errors via `writeValidationErrors()` with `FieldError` details
+  - Frontend `ApiError` class with error code, type, ref, and message
 
 ### Request Trace IDs
-- **Status:** Not started
+- **Status:** ✅ Completed (2026-06-12)
 - **Priority:** 🔴 Critical
-- **Description:** Generate a unique request ID for every API request and propagate it through the entire request lifecycle — logs, error responses, and response headers. Without this, debugging production issues is nearly impossible: you see an error in the UI, but there's no way to find the corresponding server-side logs. The infrastructure is already partially built (`logger.FromContext()` exists with commented-out OTel trace injection, and OTel metrics are already exported), but nothing generates or propagates a request ID today.
-
-- **What a trace ID enables:**
-
-  | Layer | Without Trace ID | With Trace ID |
-  |---|---|---|
-  | **User sees error** | "Internal error" — no way to report it | "Internal error (request_id: `abc123`)" — user can share with support |
-  | **Server logs** | Grep by timestamp and hope | `grep abc123 server.log` → full request context |
-  | **Error responses** | `{"error": "INTERNAL_ERROR", "message": "..."}` | `{"error": "INTERNAL_ERROR", "message": "...", "request_id": "abc123"}` |
-  | **Observability** | Metrics only (counters, histograms) | Metrics + distributed traces in Jaeger/Tempo |
-  | **Cross-service** | N/A (single binary today) | Ready for microservice split — trace propagation via `traceparent` header |
-
-- **Request ID format:** `req_<ulid>` (e.g., `req_01HXYZ...`) — ULIDs are sortable, unique, and encode a timestamp. Alternative: UUID v7 (also time-ordered).
-
-- **Implementation:**
-
-  **1. Request ID middleware (`middleware/request_id.go`):**
-  ```go
-  func RequestID(next http.Handler) http.Handler {
-      return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-          // Accept incoming trace ID from reverse proxy / load balancer
-          reqID := r.Header.Get("X-Request-ID")
-          if reqID == "" {
-              reqID = "req_" + ulid.Make().String()
-          }
-          
-          // Inject into context
-          ctx := context.WithValue(r.Context(), requestIDKey, reqID)
-          
-          // Set response header so the client always sees it
-          w.Header().Set("X-Request-ID", reqID)
-          
-          next.ServeHTTP(w, r.WithContext(ctx))
-      })
-  }
-  ```
-
-  **2. Logger integration — activate `logger.FromContext()`:**
-  ```go
-  func FromContext(ctx context.Context) *slog.Logger {
-      logger := slog.Default()
-      if reqID, ok := ctx.Value(requestIDKey).(string); ok {
-          logger = logger.With("request_id", reqID)
-      }
-      // Future OTel: also add trace_id, span_id from span context
-      return logger
-  }
-  ```
-  Every log line from a request handler automatically includes the request ID:
-  ```
-  level=ERROR msg="failed to save finding" request_id=req_01HXYZ... error="unique constraint violation"
-  ```
-
-  **3. Error response integration — include in all error responses:**
-  ```go
-  func writeError(w http.ResponseWriter, r *http.Request, status int, code, msg string) {
-      resp := map[string]string{"error": code, "message": msg}
-      if reqID := RequestIDFromContext(r.Context()); reqID != "" {
-          resp["request_id"] = reqID
-      }
-      writeJSON(w, status, resp)
-  }
-  ```
-  Error responses become:
-  ```json
-  {
-    "error": "INTERNAL_ERROR",
-    "message": "Failed to save finding",
-    "request_id": "req_01HXYZ..."
-  }
-  ```
-
-  **4. Success response integration — include in response header:**
-  - `X-Request-ID` response header is set by middleware for all responses.
-  - Optionally include `request_id` in error response bodies (not in success bodies — keep them clean, the header is sufficient).
-
-  **5. OTel trace context propagation (future):**
-  - When full distributed tracing is enabled (OTel SDK + exporter), the middleware also extracts/creates an OTel span from the `traceparent` header (W3C Trace Context).
-  - `logger.FromContext()` adds both `request_id` (our own) and `trace_id` (OTel) to log lines.
-  - This makes the request ID work standalone today, while being forward-compatible with full OTel tracing.
-
-- **Frontend changes (React UI):**
-  1. Extract `request_id` from error response bodies and display in error toasts/alerts.
-  2. Show a subtle "Request ID: xxx" in error states so users can copy and share with support.
-  3. Read `X-Request-ID` response header in the `request()` helper and attach to error objects.
-
-- **Middleware chain position:** RequestID middleware must be the **outermost** middleware — it runs before auth, tenant resolution, or any handler, so that even auth failures and 404s have a request ID.
-
-- **Dependencies on other roadmap items:**
-  - **Structured error codes:** `request_id` is added to the error response alongside `error` and `message`.
-  - **Standardized API response envelope:** `request_id` in error bodies, `X-Request-ID` header in all responses.
-  - **`writeError` signature change:** The function needs access to the request context (for the ID), so `writeError(w, status, code, msg)` becomes `writeError(w, r, status, code, msg)` — an additional breaking change across all call sites.
-
-- **Rules (to add to AGENTS.md after implementation):**
-  1. Every request handler MUST use `logger.FromContext(r.Context())` instead of bare `slog.Info/Error/Warn`. This ensures request IDs appear in all log lines.
-  2. The `RequestID` middleware must be the outermost in the chain — before auth, CORS, or any other middleware.
-  3. Never generate request IDs inside handlers — they come from middleware only.
-  4. Accept incoming `X-Request-ID` from reverse proxies (Nginx, Cloudflare, AWS ALB) to preserve upstream trace correlation.
-  5. Request IDs are included in error response bodies but NOT in success response bodies (use the `X-Request-ID` header for success responses).
+- **Description:** Every API request now has a unique request ID propagated through logs, error responses, and response headers.
+- **Implemented:**
+  - Request ID middleware (`server/internal/middleware/request_id.go`) — generates `req_<hex>` IDs
+  - Request ID context utilities (`server/internal/requestid/requestid.go`)
+  - `X-Request-ID` response header on all responses
+  - Request ID in all error response bodies (`request_id` field)
+  - Request ID in all success response bodies (`request_id` field)
+  - Logger integration: `request_id` automatically injected into all `slog` output
+  - Accepts incoming `X-Request-ID` from reverse proxies
+  - Middleware is outermost in the chain (runs before auth, CORS, etc.)
 
 ---
 
@@ -993,3 +701,7 @@ Hardening features for session integrity, threat detection, and token lifecycle.
 | Findings filters (verified status, project filter) | 2026-06-11 |
 | Base domain auth restriction (auth only on base domain, cookie domain scoping, subdomain redirect) | 2026-06-11 |
 | Org Creation UI (create org dialog, slug validation, auto-switch) | 2026-06-12 |
+| Standardized API response envelope (Cloudflare-style `success`/`result`/`errors` format) | 2026-06-12 |
+| Structured error codes (30+ codes across 8 categories with `errors.yaml` registry) | 2026-06-12 |
+| Request trace IDs (`req_<hex>` on every request, in logs + headers + response bodies) | 2026-06-12 |
+| Full handler migration (~250 call sites from legacy to new envelope/error format) | 2026-06-12 |

@@ -37,13 +37,13 @@ type changePasswordRequest struct {
 func (s *Server) handleForgotPassword(w http.ResponseWriter, r *http.Request) {
 	var req forgotPasswordRequest
 	if err := decodeJSON(r, &req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
+		writeApiError(w, r, errValidationInvalidBody)
 		return
 	}
 
 	req.Email = strings.ToLower(strings.TrimSpace(req.Email))
 	if _, err := mail.ParseAddress(req.Email); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid email address")
+		writeApiError(w, r, errValidationFieldInvalid.WithMessage("invalid email address"))
 		return
 	}
 
@@ -52,14 +52,14 @@ func (s *Server) handleForgotPassword(w http.ResponseWriter, r *http.Request) {
 
 	user, err := s.common.GetUserByEmail(r.Context(), req.Email)
 	if err != nil || user == nil {
-		writeJSON(w, http.StatusOK, successMsg)
+		writeResult(w, r, http.StatusOK, successMsg)
 		return
 	}
 
 	// Generate a cryptographically secure reset token
 	tokenBytes := make([]byte, 32)
 	if _, err := rand.Read(tokenBytes); err != nil {
-		writeError(w, http.StatusInternalServerError, "internal error")
+		writeApiError(w, r, errServerInternal)
 		return
 	}
 	rawToken := hex.EncodeToString(tokenBytes)
@@ -69,7 +69,7 @@ func (s *Server) handleForgotPassword(w http.ResponseWriter, r *http.Request) {
 	expiresAt := time.Now().UTC().Add(1 * time.Hour)
 
 	if err := s.common.CreatePasswordResetToken(r.Context(), user.ID, tokenHash, expiresAt); err != nil {
-		writeError(w, http.StatusInternalServerError, "internal error")
+		writeApiError(w, r, errServerInternal)
 		return
 	}
 
@@ -83,26 +83,26 @@ func (s *Server) handleForgotPassword(w http.ResponseWriter, r *http.Request) {
 		slog.Error("failed to send password reset email", "email", user.Email, "error", err)
 	}
 
-	writeJSON(w, http.StatusOK, successMsg)
+	writeResult(w, r, http.StatusOK, successMsg)
 }
 
 // handleResetPassword validates the reset token and updates the password.
 func (s *Server) handleResetPassword(w http.ResponseWriter, r *http.Request) {
 	var req resetPasswordRequest
 	if err := decodeJSON(r, &req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
+		writeApiError(w, r, errValidationInvalidBody)
 		return
 	}
 
 	req.Token = strings.TrimSpace(req.Token)
 	if req.Token == "" || req.Password == "" {
-		writeError(w, http.StatusBadRequest, "token and password are required")
+		writeApiError(w, r, errValidationFieldInvalid.WithMessage("token and password are required"))
 		return
 	}
 
 	// Validate password strength
 	if err := validatePassword(req.Password); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+		writeApiError(w, r, errValidationFieldInvalid.WithMessage(err.Error()))
 		return
 	}
 
@@ -110,24 +110,24 @@ func (s *Server) handleResetPassword(w http.ResponseWriter, r *http.Request) {
 	tokenHash := hashToken(req.Token)
 	resetToken, err := s.common.GetPasswordResetToken(r.Context(), tokenHash)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal error")
+		writeApiError(w, r, errServerInternal)
 		return
 	}
 	if resetToken == nil {
-		writeError(w, http.StatusBadRequest, "invalid or expired reset token")
+		writeApiError(w, r, errValidationFieldInvalid.WithMessage("invalid or expired reset token"))
 		return
 	}
 
 	// Hash the new password
 	newHash, err := authpkg.HashPassword(req.Password)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal error")
+		writeApiError(w, r, errServerInternal)
 		return
 	}
 
 	// Update password
 	if err := s.common.UpdateUserPassword(r.Context(), resetToken.UserID, newHash); err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to update password")
+		writeApiError(w, r, errServerInternal)
 		return
 	}
 
@@ -142,56 +142,56 @@ func (s *Server) handleResetPassword(w http.ResponseWriter, r *http.Request) {
 		go s.sendPasswordChangedNotification(resetUser.Email, resetUser.Name)
 	}
 
-	writeJSON(w, http.StatusOK, map[string]string{"message": "password has been reset successfully"})
+	writeMessage(w, r, http.StatusOK, "password has been reset successfully")
 }
 
 // handleChangePassword allows an authenticated user to change their password.
 func (s *Server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 	user := middleware.UserFromContext(r.Context())
 	if user == nil {
-		writeError(w, http.StatusUnauthorized, "not authenticated")
+		writeApiError(w, r, errAuthNotAuthenticated)
 		return
 	}
 
 	var req changePasswordRequest
 	if err := decodeJSON(r, &req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
+		writeApiError(w, r, errValidationInvalidBody)
 		return
 	}
 
 	if req.CurrentPassword == "" || req.NewPassword == "" {
-		writeError(w, http.StatusBadRequest, "current_password and new_password are required")
+		writeApiError(w, r, errValidationFieldInvalid.WithMessage("current_password and new_password are required"))
 		return
 	}
 
 	// Verify current password
 	if err := authpkg.CheckPassword(user.PasswordHash, req.CurrentPassword); err != nil {
-		writeError(w, http.StatusUnauthorized, "current password is incorrect")
+		writeApiError(w, r, errAuthNotAuthenticated)
 		return
 	}
 
 	// Validate new password strength
 	if err := validatePassword(req.NewPassword); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+		writeApiError(w, r, errValidationFieldInvalid.WithMessage(err.Error()))
 		return
 	}
 
 	// Hash and update
 	newHash, err := authpkg.HashPassword(req.NewPassword)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal error")
+		writeApiError(w, r, errServerInternal)
 		return
 	}
 
 	if err := s.common.UpdateUserPassword(r.Context(), user.ID, newHash); err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to update password")
+		writeApiError(w, r, errServerInternal)
 		return
 	}
 
 	// Send notification email
 	go s.sendPasswordChangedNotification(user.Email, user.Name)
 
-	writeJSON(w, http.StatusOK, map[string]string{"message": "password changed successfully"})
+	writeMessage(w, r, http.StatusOK, "password changed successfully")
 }
 
 // ─── Helpers ────────────────────────────────────────────────────────────────

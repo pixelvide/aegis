@@ -41,13 +41,13 @@ func Auth(authSvc *auth.Service, common *store.CommonStore, sessionCache *cache.
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			cookie, err := r.Cookie(CookieName)
 			if err != nil || cookie.Value == "" {
-				http.Error(w, `{"error":"authentication required"}`, http.StatusUnauthorized)
+				writeMiddlewareError(w, r, errAuthRequired)
 				return
 			}
 
 			userID, jti, err := authSvc.ValidateToken(cookie.Value)
 			if err != nil {
-				http.Error(w, `{"error":"invalid or expired token"}`, http.StatusUnauthorized)
+				writeMiddlewareError(w, r, errAuthInvalidToken)
 				return
 			}
 
@@ -56,7 +56,7 @@ func Auth(authSvc *auth.Service, common *store.CommonStore, sessionCache *cache.
 				// Try cache first (Valkey)
 				if revoked, cached := sessionCache.IsSessionRevoked(r.Context(), jti); cached {
 					if revoked {
-						http.Error(w, `{"error":"session has been revoked"}`, http.StatusUnauthorized)
+						writeMiddlewareError(w, r, errAuthSessionRevoked)
 						return
 					}
 					// Cache says active — skip DB check
@@ -67,7 +67,7 @@ func Auth(authSvc *auth.Service, common *store.CommonStore, sessionCache *cache.
 						if revoked {
 							sessionCache.MarkSessionRevoked(r.Context(), jti)
 						}
-						http.Error(w, `{"error":"session has been revoked"}`, http.StatusUnauthorized)
+						writeMiddlewareError(w, r, errAuthSessionRevoked)
 						return
 					}
 					// Populate cache with active status
@@ -82,7 +82,7 @@ func Auth(authSvc *auth.Service, common *store.CommonStore, sessionCache *cache.
 
 			user, err := common.GetUser(r.Context(), userID)
 			if err != nil || user == nil {
-				http.Error(w, `{"error":"user not found"}`, http.StatusUnauthorized)
+				writeMiddlewareError(w, r, errAuthUserNotFound)
 				return
 			}
 

@@ -1,4 +1,4 @@
-import { NavLink, useLocation, useNavigate } from "react-router-dom"
+import { NavLink, useLocation } from "react-router-dom"
 import {
   LayoutDashboard,
   Search,
@@ -41,22 +41,28 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { OrgSwitcher } from "@/components/org-switcher"
 import { useAuth } from "@/lib/auth-context"
+import { useProject } from "@/lib/project-context"
+import { useDomainMode, baseDomainUrl } from "@/lib/domain"
 
-const mainNav = [
-  { to: "/", icon: LayoutDashboard, label: "Dashboard" },
-  { to: "/scans", icon: Search, label: "Scans" },
-  { to: "/findings", icon: Bug, label: "Findings" },
-  { to: "/projects", icon: FolderKanban, label: "Projects" },
-  { to: "/agents", icon: Bot, label: "Agents" },
-]
-
-const resourcesNav = [
-  { to: "/reports", icon: FileText, label: "Reports" },
-  { to: "/analytics", icon: BarChart3, label: "Analytics" },
-]
-
-const bottomNav = [
+const orgNav = [
+  { to: "/", icon: FolderKanban, label: "Projects" },
   { to: "/settings", icon: Settings, label: "Settings" },
+]
+
+const projectNav = [
+  { to: "dashboard", icon: LayoutDashboard, label: "Dashboard" },
+  { to: "scans", icon: Search, label: "Scans" },
+  { to: "findings", icon: Bug, label: "Findings" },
+  { to: "agents", icon: Bot, label: "Agents" },
+]
+
+const projectResourcesNav = [
+  { to: "reports", icon: FileText, label: "Reports" },
+  { to: "analytics", icon: BarChart3, label: "Analytics" },
+]
+
+const projectBottomNav = [
+  { to: "settings", icon: Settings, label: "Settings" },
 ]
 
 function userInitials(name: string): string {
@@ -71,12 +77,24 @@ function userInitials(name: string): string {
 
 export function AppSidebar() {
   const location = useLocation()
-  const navigate = useNavigate()
   const { isMobile } = useSidebar()
   const { user, logout } = useAuth()
+  const { currentProject } = useProject()
+  const { baseDomain } = useDomainMode()
 
-  const isActive = (to: string) =>
-    to === "/" ? location.pathname === "/" : location.pathname.startsWith(to)
+  const isActive = (to: string) => {
+    if (to === "/") return location.pathname === "/"
+    if (currentProject) {
+      const fullPath = `/project/${currentProject.id}/${to}`
+      return location.pathname.startsWith(fullPath)
+    }
+    return location.pathname.startsWith(to)
+  }
+
+  const getLink = (to: string) => {
+    if (to === "/" || !currentProject) return to
+    return `/project/${currentProject.id}/${to}`
+  }
 
   const displayName = user?.name || user?.email || "User"
   const displayEmail = user?.email || ""
@@ -84,7 +102,6 @@ export function AppSidebar() {
 
   return (
     <Sidebar variant="inset" collapsible="icon">
-      {/* Header: Org/Project Switcher */}
       <SidebarHeader>
         <SidebarMenu>
           <SidebarMenuItem>
@@ -94,7 +111,8 @@ export function AppSidebar() {
       </SidebarHeader>
 
       <SidebarContent>
-        {/* Quick Create */}
+        {/* Quick Create - only in project context */}
+        {currentProject && (
         <SidebarGroup>
           <SidebarGroupContent>
             <SidebarMenu>
@@ -110,19 +128,21 @@ export function AppSidebar() {
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
+        )}
 
         {/* Main Navigation */}
         <SidebarGroup>
+          {currentProject && <SidebarGroupLabel>Project View</SidebarGroupLabel>}
           <SidebarGroupContent>
             <SidebarMenu>
-              {mainNav.map((item) => (
+              {(currentProject ? projectNav : orgNav).map((item) => (
                 <SidebarMenuItem key={item.to}>
                   <SidebarMenuButton
                     asChild
                     isActive={isActive(item.to)}
                     tooltip={item.label}
                   >
-                    <NavLink to={item.to}>
+                    <NavLink to={getLink(item.to)}>
                       <item.icon />
                       <span>{item.label}</span>
                     </NavLink>
@@ -134,14 +154,15 @@ export function AppSidebar() {
         </SidebarGroup>
 
         {/* Resources */}
+        {currentProject && (
         <SidebarGroup className="group-data-[collapsible=icon]:hidden">
           <SidebarGroupLabel>Resources</SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>
-              {resourcesNav.map((item) => (
+              {projectResourcesNav.map((item) => (
                 <SidebarMenuItem key={item.to}>
                   <SidebarMenuButton asChild isActive={isActive(item.to)} tooltip={item.label}>
-                    <NavLink to={item.to}>
+                    <NavLink to={getLink(item.to)}>
                       <item.icon />
                       <span>{item.label}</span>
                     </NavLink>
@@ -157,15 +178,16 @@ export function AppSidebar() {
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
+        )}
 
         {/* Bottom group — pushed to bottom */}
         <SidebarGroup className="mt-auto">
           <SidebarGroupContent>
             <SidebarMenu>
-              {bottomNav.map((item) => (
+              {currentProject && projectBottomNav.map((item) => (
                 <SidebarMenuItem key={item.to}>
                   <SidebarMenuButton asChild isActive={isActive(item.to)} tooltip={item.label}>
-                    <NavLink to={item.to}>
+                    <NavLink to={getLink(item.to)}>
                       <item.icon />
                       <span>{item.label}</span>
                     </NavLink>
@@ -230,9 +252,15 @@ export function AppSidebar() {
                 <DropdownMenuSeparator />
 
                 <DropdownMenuGroup>
-                  <DropdownMenuItem onClick={() => navigate("/profile")}>
+                  <DropdownMenuItem onClick={() => {
+                    if (baseDomain) {
+                      window.location.href = baseDomainUrl(baseDomain, "/profile")
+                    } else {
+                      window.location.href = "/profile"
+                    }
+                  }}>
                     <User className="mr-2 h-4 w-4" />
-                    Account
+                    Manage Account
                   </DropdownMenuItem>
                   <DropdownMenuItem>
                     <CreditCard className="mr-2 h-4 w-4" />

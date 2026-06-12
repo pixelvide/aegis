@@ -13,6 +13,8 @@ import (
 	"log/slog"
 	"os"
 	"strings"
+
+	"github.com/pixelvide/aegis/server/internal/requestid"
 )
 
 // Init creates and sets the global slog logger based on the given level and format.
@@ -39,21 +41,23 @@ func Init(level, format string) {
 	slog.SetDefault(logger)
 }
 
-// FromContext returns a logger from the given context.
-// Currently returns the default logger, but is designed for future OTel
-// integration where trace_id and span_id will be extracted from the
-// context and added as log attributes automatically.
+// FromContext returns a logger enriched with request-scoped attributes.
+// Currently extracts the request ID from context. Future: add OTel trace_id
+// and span_id when distributed tracing is enabled.
 func FromContext(ctx context.Context) *slog.Logger {
+	logger := slog.Default()
+	if reqID := requestid.FromContext(ctx); reqID != "" {
+		logger = logger.With("request_id", reqID)
+	}
 	// Future: extract OTel trace context and add as attributes:
 	//   spanCtx := trace.SpanContextFromContext(ctx)
 	//   if spanCtx.IsValid() {
-	//       return slog.Default().With(
+	//       logger = logger.With(
 	//           "trace_id", spanCtx.TraceID().String(),
 	//           "span_id", spanCtx.SpanID().String(),
 	//       )
 	//   }
-	_ = ctx // avoid unused warning until OTel is integrated
-	return slog.Default()
+	return logger
 }
 
 // parseLevel converts a string log level to slog.Level.

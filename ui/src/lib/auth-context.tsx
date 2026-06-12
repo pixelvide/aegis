@@ -8,6 +8,7 @@ interface User {
   name: string
   avatar_url: string
   mfa_enabled: boolean
+  email_verified: boolean
 }
 
 interface MFAMethod {
@@ -88,7 +89,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     fetch("/api/v1/auth/me", { credentials: "include" })
       .then(async (res) => {
         if (res.ok) {
-          const data = await res.json()
+          const body = await res.json()
+          const data = body.result ?? body
           setUser(data.user)
         } else {
           setUser(null)
@@ -98,13 +100,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       .finally(() => setLoading(false))
   }, [])
 
-  // Redirect to login if not authenticated (skip public routes)
+  // Redirect to login if not authenticated, or to verify-email-pending if unverified
   useEffect(() => {
-    const isPublic = ["/login", "/forgot-password", "/reset-password", "/verify-email"].some(
-      p => location.pathname.startsWith(p)
-    )
-    if (!loading && !user && !isPublic) {
+    // Paths that don't require a redirect to /login
+    const allowedPaths = ["/login", "/forgot-password", "/reset-password", "/verify-email", "/verify-email-pending"]
+    const isAllowed = allowedPaths.some(p => location.pathname.startsWith(p))
+    if (!loading && !user && !isAllowed) {
       navigate("/login", { replace: true })
+    }
+    // If authenticated but email not verified, redirect to pending page
+    // (allow /verify-email so the verification callback works)
+    const verifyAllowed = ["/verify-email-pending", "/verify-email"]
+    if (!loading && user && !user.email_verified && !verifyAllowed.some(p => location.pathname.startsWith(p))) {
+      navigate("/verify-email-pending", { replace: true })
     }
   }, [loading, user, location.pathname, navigate])
 
@@ -118,7 +126,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         headers: { "Content-Type": "application/json" },
       })
       if (res.ok) {
-        const data: OrgsListResponse = await res.json()
+        const body: { result?: OrgsListResponse } = await res.json()
+        const data = (body.result ?? body) as OrgsListResponse
         const baseDomain = data.base_domain
         const orgs = data.orgs || []
 
@@ -146,10 +155,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       body: JSON.stringify({ email, password }),
     })
     if (!res.ok) {
-      const data = await res.json().catch(() => ({ error: "Login failed" }))
-      throw new Error(data.error || "Login failed")
+      const body = await res.json().catch(() => ({ errors: [{ message: "Login failed" }] }))
+      const msg = body.errors?.[0]?.message || body.error || "Login failed"
+      throw new Error(msg)
     }
-    const data = await res.json()
+    const body = await res.json()
+    const data = body.result ?? body
 
     // MFA challenge — don't set user yet
     if (data.mfa_required) {
@@ -158,6 +169,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     setUser(data.user)
 
+    // If email not verified, go to verification pending page
+    if (!data.user.email_verified) {
+      navigate("/verify-email-pending", { replace: true })
+      return
+    }
+
     // If there's a validated return_to param, redirect back to that subdomain
     const returnTo = getValidReturnTo()
     if (returnTo) {
@@ -165,7 +182,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     } else {
       await redirectToOrg()
     }
-  }, [redirectToOrg])
+  }, [redirectToOrg, navigate])
 
   const register = useCallback(async (email: string, password: string, name: string) => {
     const res = await fetch("/api/v1/auth/register", {
@@ -175,20 +192,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       body: JSON.stringify({ email, password, name }),
     })
     if (!res.ok) {
-      const data = await res.json().catch(() => ({ error: "Registration failed" }))
-      throw new Error(data.error || "Registration failed")
+      const body = await res.json().catch(() => ({ errors: [{ message: "Registration failed" }] }))
+      const msg = body.errors?.[0]?.message || body.error || "Registration failed"
+      throw new Error(msg)
     }
-    const data = await res.json()
+    const body = await res.json()
+    const data = body.result ?? body
     setUser(data.user)
 
-    // If there's a validated return_to param, redirect back
-    const returnTo = getValidReturnTo()
-    if (returnTo) {
-      window.location.href = returnTo
-    } else {
-      await redirectToOrg()
-    }
-  }, [redirectToOrg])
+    // After registration, always go to verification pending page
+    navigate("/verify-email-pending", { replace: true })
+  }, [navigate])
 
   const logout = useCallback(async () => {
     await fetch("/api/v1/auth/logout", {
@@ -203,7 +217,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     try {
       const res = await fetch("/api/v1/auth/me", { credentials: "include" })
       if (res.ok) {
-        const data = await res.json()
+        const body = await res.json()
+        const data = body.result ?? body
         setUser(data.user)
       }
     } catch {
