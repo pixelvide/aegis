@@ -14,6 +14,7 @@ import { request } from "@/lib/api"
 import { QRCodeSVG } from "qrcode.react"
 import { toast } from "sonner"
 import { PasswordModal } from "@/components/password-modal"
+import { copyToClipboard } from "@/lib/utils"
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -394,7 +395,7 @@ function TwoFactorTab() {
   }
 
   const copyRecoveryCodes = () => {
-    navigator.clipboard.writeText(recoveryCodes.join("\n"))
+    copyToClipboard(recoveryCodes.join("\n"))
     setCopiedCodes(true)
     setTimeout(() => setCopiedCodes(false), 2000)
   }
@@ -582,7 +583,7 @@ function TwoFactorTab() {
                 <label className="text-sm font-medium">Or enter this key manually</label>
                 <div className="flex items-center gap-2">
                   <code className="flex-1 rounded bg-muted px-3 py-2 text-sm font-mono break-all">{totpSecret}</code>
-                  <Button variant="outline" size="sm" onClick={() => navigator.clipboard.writeText(totpSecret)}>
+                  <Button variant="outline" size="sm" onClick={() => copyToClipboard(totpSecret)}>
                     <Copy className="h-4 w-4" />
                   </Button>
                 </div>

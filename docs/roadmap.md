@@ -385,6 +385,33 @@ Audit logging is a cross-cutting concern that gets exponentially harder to retro
   - UI page to browse and filter audit log (by actor, action, date range)
   - Export to CSV/JSON for compliance reports
 
+### API Token Usage Tracking
+- **Status:** Partially implemented
+- **Priority:** 🟡 Medium
+- **Description:** Track and display detailed usage information for API tokens — last used time, source IPs, request counts, and usage history. Currently `last_used` timestamp is stored and updated on each token auth, but not displayed in the UI and no IP/usage history is recorded.
+- **What exists:**
+  - `last_used TIMESTAMPTZ` column in `org_xxx.api_tokens` table
+  - `UpdateTokenLastUsed()` store method (called async on each token auth)
+  - `last_used` field in APIToken model and API response
+- **What's missing:**
+  - **Token usage log table:** `org_xxx.api_token_usage` — `id UUID PK`, `token_id UUID`, `ip_address TEXT`, `user_agent TEXT`, `endpoint TEXT`, `status_code INT`, `created_at TIMESTAMPTZ`
+  - **Last used IP:** Add `last_used_ip TEXT` column to `api_tokens` table (updated alongside `last_used`)
+  - **IP history:** Track unique IPs per token (derived from usage log). Display as a list of IPs with first/last seen timestamps.
+  - **Usage count:** Add `usage_count BIGINT DEFAULT 0` column to `api_tokens` (incremented on each use)
+  - **UI — Token list:** Show "Last used" column (relative time, e.g., "2 hours ago") and "Last IP" in the token table
+  - **UI — Token detail dialog/panel:** Click a token row to see:
+    - Last used time + IP
+    - Total usage count
+    - Unique IP addresses (with first/last seen)
+    - Recent usage log (last 50 requests: timestamp, IP, endpoint, status)
+  - **Backend changes:**
+    - Update `TokenAuth` middleware to log IP, user agent, endpoint to `api_token_usage` (async, non-blocking)
+    - Update `UpdateTokenLastUsed()` to also set `last_used_ip`
+    - Increment `usage_count` on each use
+    - New store methods: `LogTokenUsage()`, `GetTokenUsageStats()`, `ListTokenUsageLog()`
+    - New API endpoints: `GET /api/v1/tokens/{id}/usage` (admin+), `GET /api/v1/projects/{projectId}/tokens/{id}/usage`
+  - **Retention:** Auto-purge usage logs older than 90 days (configurable)
+
 ### IP Restriction
 - **Status:** Not started
 - **Priority:** 🟡 Medium

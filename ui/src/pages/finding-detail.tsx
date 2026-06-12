@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Separator } from "@/components/ui/separator"
 import { findingsApi } from "@/lib/api"
-import { formatDate } from "@/lib/utils"
+import { formatDate, copyToClipboard } from "@/lib/utils"
 import type { Finding, FindingStatus } from "@/lib/types"
 import {
   ArrowLeft, FileCode2, Copy, Check
@@ -34,7 +34,7 @@ export default function FindingDetailPage() {
   }
 
   const handleCopy = async (code: string) => {
-    await navigator.clipboard.writeText(code)
+    await copyToClipboard(code)
     setCopied(true)
     setTimeout(() => setCopied(false), 2000)
   }

@@ -69,6 +69,7 @@ const projectResourcesNav = [
 
 const projectBottomNav = [
   { to: "settings", icon: Settings, label: "Settings" },
+  { to: "settings/api-tokens", icon: Key, label: "API Tokens" },
 ]
 
 function userInitials(name: string): string {

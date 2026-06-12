@@ -299,6 +299,7 @@ function AppLayout() {
                             <Route path="findings/:id" element={<FindingDetailPage />} />
                             <Route path="agents" element={<AgentsPage />} />
                             <Route path="settings" element={<SettingsPage />} />
+                            <Route path="settings/api-tokens" element={<ApiTokensPage />} />
                           </Route>
                         </Routes>
                       </div>
