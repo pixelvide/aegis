@@ -16,6 +16,7 @@ import (
 
 // AgentFindingRequest is the body for POST /api/v1/agent/findings.
 type AgentFindingRequest struct {
+	ScanID      string  `json:"scan_id"`
 	ProjectID   string  `json:"project_id"`
 	Fingerprint string  `json:"fingerprint"`
 	Title       string  `json:"title"`
@@ -71,6 +72,14 @@ func (s *Server) handleAgentCreateFinding(w http.ResponseWriter, r *http.Request
 	}
 
 	// Validate required fields
+	if req.ScanID == "" {
+		writeApiError(w, r, errValidationFieldRequired.WithMessage("scan_id is required"))
+		return
+	}
+	if len(req.ScanID) > 36 {
+		writeApiError(w, r, errValidationFieldInvalid.WithMessage("scan_id must be 36 chars or less"))
+		return
+	}
 	if req.ProjectID == "" {
 		writeApiError(w, r, errValidationFieldRequired.WithMessage("project_id is required"))
 		return
@@ -149,6 +158,7 @@ func (s *Server) handleAgentCreateFinding(w http.ResponseWriter, r *http.Request
 	now := time.Now().UTC()
 	finding := &models.Finding{
 		ID:          uuid.New().String(),
+		ScanID:      req.ScanID,
 		ProjectID:   req.ProjectID,
 		Fingerprint: req.Fingerprint,
 		Title:       req.Title,

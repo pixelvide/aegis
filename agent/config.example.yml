@@ -1,0 +1,30 @@
+# Aegis Configuration
+# Copy this file to one of:
+#   .aegis/config.yml          (per-workspace, highest priority)
+#   ~/.pixelvide/agents/aegis/config.yml (global, lowest priority)
+#
+# Priority: CLI flags > env vars > workspace config > global config
+# API keys are always read from environment variables (never put keys in this file).
+
+# ── Global Defaults ──────────────────────────────────────────────────────────
+# These apply to all personas unless overridden below.
+
+provider: gemini                    # gemini | openai | ollama | cloudflare
+model: gemini-2.5-flash            # Model name for the provider
+# base_url: https://api.openai.com/v1  # Only needed for OpenAI-compatible providers
+# workspace: /path/to/project      # Default workspace directory
+
+# ── Per-Persona Overrides ────────────────────────────────────────────────────
+# Each persona inherits the global settings above.
+# Override only what differs — unset fields fall back to global.
+
+# personas:
+#   sharingan:
+#     model: gemini-2.5-pro         # Sharingan uses a bigger model for deep analysis
+#
+#   senku:
+#     model: gemini-2.5-flash       # Senku uses a fast model (dependency scanning)
+#
+#   killua:
+#     provider: openai              # Killua uses OpenAI for targeted analysis
+#     model: gpt-4o

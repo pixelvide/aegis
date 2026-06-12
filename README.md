@@ -6,7 +6,7 @@
 
 **AI-powered security scanning platform** — multi-tenant SaaS with per-org data isolation.
 
-Aegis provides a centralized platform where external AI security agents push vulnerability findings via authenticated REST API. Findings are deduplicated, triaged, and presented in a unified dashboard.
+Aegis provides a centralized platform where AI security agents push vulnerability findings via authenticated REST API. Findings are deduplicated, triaged, and presented in a unified dashboard. The **Aegis agent** is a standalone Go binary that scans codebases using AI-powered personas and pushes findings to the platform.
 
 ---
 
@@ -203,9 +203,23 @@ aegis/
 │           ├── metric-card.tsx  # Dashboard stat cards
 │           ├── severity-badge.tsx
 │           └── ui/             # shadcn/ui primitives
+├── agent/
+│   ├── main.go                 # Agent entry point
+│   ├── config.go               # YAML config + layered resolution
+│   ├── reporter.go             # Server push + local JSON reporter
+│   ├── subagents.go            # exploit-writer + deep-tracer
+│   ├── Dockerfile              # Multi-stage build (Ubuntu 24.04 runtime)
+│   ├── aegis-run               # Docker convenience script
+│   ├── go.mod                  # Separate Go module
+│   └── personas/
+│       ├── doc.go              # Persona registry
+│       ├── sharingan.go        # 👁️ Full security audit
+│       ├── senku.go            # 🧪 Supply chain analysis
+│       └── killua.go           # ⚡ Targeted penetration testing
 └── docs/
     ├── architecture.md          # System design + data model
     ├── api-reference.md         # Full API documentation
+    ├── agent.md                 # Agent setup, usage, Docker, CI/CD
     ├── deployment.md            # Docker + ops guide
     └── roadmap.md               # Feature roadmap
 ```
@@ -322,6 +336,7 @@ Agent endpoints use `Authorization: Bearer aegis_xxx` tokens instead of cookies.
 |---|---|
 | [Architecture](docs/architecture.md) | System design, multi-tenancy, data model, request lifecycle |
 | [API Reference](docs/api-reference.md) | Full endpoint documentation with examples |
+| [Agent](docs/agent.md) | Agent setup, personas, configuration, Docker, CI/CD |
 | [Deployment](docs/deployment.md) | Docker setup, CI/CD, operations, backup/restore |
 | [Roadmap](docs/roadmap.md) | Planned features and priorities |
 

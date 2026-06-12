@@ -1,0 +1,78 @@
+#!/bin/bash
+# aegis-run — Run Aegis security agent inside Docker with pre-installed tools.
+#
+# Usage:
+#   ./aegis-run sharingan                                      # Audit current directory
+#   ./aegis-run --workspace=/path/to/project sharingan         # Audit specific project
+#   ./aegis-run --target=https://staging.example.com sharingan # With live target
+#   ./aegis-run killua "Test PaymentController"                # Targeted pentest
+#   ./aegis-run senku                                          # Supply chain audit
+#
+# Environment variables:
+#   GEMINI_API_KEY       Gemini API key
+#   OPENAI_API_KEY       OpenAI API key
+#   CF_ACCOUNT_ID        Cloudflare account ID
+#   CF_GATEWAY_ID        Cloudflare gateway ID
+#   CF_API_TOKEN         Cloudflare API token
+#   AEGIS_BASE_URL       Aegis server URL for pushing findings
+#   AEGIS_API_KEY        API key for Aegis server
+#   AEGIS_PROJECT_ID     Project ID for server reporting
+#   AEGIS_IMAGE          Docker image name (default: aegis-agent:latest)
+
+set -euo pipefail
+
+IMAGE="${AEGIS_IMAGE:-aegis-security:latest}"
+WORKSPACE=""
+ARGS=()
+
+# Parse args to extract --workspace (we need it for docker mount)
+for arg in "$@"; do
+    if [[ "$arg" == --workspace=* ]]; then
+        WORKSPACE="${arg#--workspace=}"
+    else
+        ARGS+=("$arg")
+    fi
+done
+
+# Default workspace = current directory
+if [ -z "$WORKSPACE" ]; then
+    WORKSPACE="$(pwd)"
+fi
+
+# Resolve to absolute path
+WORKSPACE="$(cd "$WORKSPACE" && pwd)"
+
+# Check if image exists
+if ! docker image inspect "$IMAGE" &>/dev/null; then
+    echo "❌ Docker image '$IMAGE' not found."
+    echo "   Build it first: cd agent && docker build -t aegis-agent ."
+    exit 1
+fi
+
+# Build docker run command
+DOCKER_ARGS=(
+    docker run --rm -it
+    # Mount workspace (read-write so .aegis/ can be written)
+    -v "$WORKSPACE:/workspace"
+)
+
+# Forward all known env vars (only if set)
+for var in GEMINI_API_KEY OPENAI_API_KEY CF_ACCOUNT_ID CF_GATEWAY_ID CF_API_TOKEN AEGIS_BASE_URL AEGIS_API_KEY AEGIS_PROJECT_ID; do
+    if [ -n "${!var:-}" ]; then
+        DOCKER_ARGS+=(-e "$var=${!var}")
+    fi
+done
+
+# Override workspace to /workspace (container mount point)
+DOCKER_ARGS+=(
+    "$IMAGE"
+    --workspace=/workspace
+    "${ARGS[@]}"
+)
+
+echo "🛡️  Aegis (Docker)"
+echo "📁 Workspace: $WORKSPACE"
+echo "🐳 Image: $IMAGE"
+echo ""
+
+exec "${DOCKER_ARGS[@]}"

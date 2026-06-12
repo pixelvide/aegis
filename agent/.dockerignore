@@ -1,0 +1,5 @@
+# Don't send the entire repo to Docker daemon — only what's needed
+*
+!bin/localharness
+!bin/aegis
+!Dockerfile

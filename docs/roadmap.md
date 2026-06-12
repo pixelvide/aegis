@@ -54,7 +54,7 @@ High-priority items to make the existing platform fully functional end-to-end.
 Port the Aegis scanning agent into the monorepo and connect it to the platform. This is the core value proposition — without the scanning engine, the platform is a dashboard with no data source.
 
 ### Scanning Agent
-- **Status:** Not started
+- **Status:** 🟡 In progress (agent binary complete, UI pending)
 - **Priority:** 🔴 Critical
 - **Description:** Port the Aegis scanning agent from `local-harness/agents/aegis/` into `agent/` in the Aegis monorepo. The agent becomes a standalone Go binary and Docker image that scans codebases using AI-powered personas and pushes findings to the Aegis server via the existing agent ingest API.
 - **Architecture:**
@@ -64,27 +64,30 @@ Port the Aegis scanning agent into the monorepo and connect it to the platform. 
   - **Docker image:** `aegis-agent` (separate from `aegis-server`)
   - **Docker Compose:** Agent is NOT included in docker-compose.yml. Users run the agent binary or Docker image manually.
 - **Agent → Server communication:**
-  - Agent generates a **ULID** (time-sortable, 26-char) as `scan_id` at the start of each run
+  - Agent generates a **UUID v7** (time-sortable) as `scan_id` at the start of each run
   - Every finding pushed includes this `scan_id` for correlation
   - Server groups findings by `scan_id` for display on the Scans page
   - Scan metadata (persona, agent version, target info) is inferred from findings
   - No explicit scan lifecycle (no start/complete states) — the `scan_id` is a correlation ID only
-- **Dual output mode:**
-  - When `--server` is provided: push findings to Aegis server via `POST /api/v1/agent/findings`
-  - If the server is unreachable: fall back to local `findings.json` so findings can be pushed later
-  - Without `--server`: write findings locally only (offline mode, existing behavior)
+- **Finding reporting via `report_finding` host tool:**
+  - Personas call `report_finding()` directly with structured finding data
+  - Reporter pushes to Aegis server via `POST /api/v1/agent/findings` with 3x exponential backoff retry
+  - Findings always saved locally to `.aegis/findings.json` regardless of server connectivity
+  - No file scraping, hooks, or post-scan scanning — clean tool-based integration
+- **Configuration (layered resolution):**
+  - **CLI flags > env vars > config.yml (workspace) > config.yml (global)**
+  - `AEGIS_BASE_URL` / `--report-base-url` / `reporting.base_url` — server URL
+  - `AEGIS_API_KEY` — env-var-only (no CLI flag to avoid process list / shell history leaks)
+  - `AEGIS_PROJECT_ID` / `--project` / `reporting.project_id` — project UUID
 - **CLI interface:**
   ```bash
-  # Push to server
-  aegis --server=https://acme.aegis.io --token=aegis_xxx sharingan
+  # Push to server (API key always from env var)
+  AEGIS_API_KEY=aegis_xxx \
+    aegis --report-base-url=https://acme.aegis.io --project=<uuid> sharingan
 
-  # With workspace
-  aegis --server=https://acme.aegis.io --token=aegis_xxx \
-    --workspace=/path/to/project sharingan
-
-  # Custom prompt
-  aegis --server=https://acme.aegis.io --token=aegis_xxx \
-    killua "Test the authentication flow in src/auth/"
+  # All via env vars (ideal for CI/Docker)
+  AEGIS_BASE_URL=https://acme.aegis.io AEGIS_API_KEY=aegis_xxx AEGIS_PROJECT_ID=<uuid> \
+    aegis sharingan
 
   # Offline mode (local findings.json only)
   aegis sharingan
@@ -93,9 +96,10 @@ Port the Aegis scanning agent into the monorepo and connect it to the platform. 
   docker run --rm \
     -v /path/to/project:/workspace \
     -e GEMINI_API_KEY=xxx \
-    aegis-agent \
-    --server=https://acme.aegis.io --token=aegis_xxx \
-    sharingan
+    -e AEGIS_API_KEY=aegis_xxx \
+    -e AEGIS_BASE_URL=https://acme.aegis.io \
+    -e AEGIS_PROJECT_ID=<uuid> \
+    aegis-agent sharingan
   ```
 - **Personas ported:**
   - 👁️ **Sharingan** — Full security audit & reconnaissance
@@ -104,16 +108,20 @@ Port the Aegis scanning agent into the monorepo and connect it to the platform. 
 - **Subagents ported:**
   - `exploit-writer` — Creates finding reports + working exploit PoC scripts
   - `deep-tracer` — Read-only deep analysis of specific files/components
-- **Changes needed:**
-  - Copy agent code from `local-harness/agents/aegis/` → `agent/`
-  - Add `--server` and `--token` CLI flags
-  - Add `reporter.go` — HTTP reporting layer (push findings to server, fallback to local JSON)
-  - Add ULID generation for scan correlation
-  - Add `agent/Dockerfile` for standalone agent image
-  - Server: accept and store `scan_id` from agent findings
+- **Completed (2026-06-12):**
+  - ✅ Copied agent code from `local-harness/agents/aegis/` → `agent/`
+  - ✅ Created `agent/go.mod` (separate module with replace directive for local dev)
+  - ✅ Added `ReportingConfig` to `config.go` (layered resolution with env vars)
+  - ✅ Added `--report-base-url` and `--project` CLI flags to `main.go`
+  - ✅ Created `reporter.go` — HostTool-based reporter (`report_finding` tool)
+  - ✅ UUID v7 scan correlation via `github.com/google/uuid`
+  - ✅ Created `agent/Dockerfile` (golang:1.25-alpine build → ubuntu:24.04 runtime)
+  - ✅ Created `agent/aegis-run` Docker convenience script
+  - ✅ Server: `scan_id` added to `AgentFindingRequest` (required field + validation)
+  - ✅ Documentation: `docs/agent.md`
+- **Remaining (deferred):**
   - UI: Scans page shows scan groups from agent pushes (grouped by `scan_id`, sorted newest first)
   - UI: Agents page updated with setup/usage instructions (token + CLI command)
-  - Documentation: `docs/agent.md` with setup, usage, Docker, CI/CD examples
 
 ---
 

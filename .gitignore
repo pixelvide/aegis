@@ -4,7 +4,7 @@
 !.env.example
 
 # ── Go ───────────────────────────────────────────────────────────
-# Compiled binary
+# Server binary
 server/cmd/aegis-server/aegis-server
 
 # Embedded UI build output (copied during Docker build)
@@ -48,3 +48,7 @@ coverage.html
 *.so
 *.dylib
 tmp/
+
+# ── Agent ────────────────────────────────────────────────────────
+# Pre-compiled binaries (created by `make docker` in agent/)
+agent/bin/
