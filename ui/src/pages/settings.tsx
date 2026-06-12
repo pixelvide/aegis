@@ -35,7 +35,7 @@ export default function SettingsPage() {
             </div>
             <div>
               <label className="text-sm font-medium block mb-1.5">Docker Image</label>
-              <Input type="text" defaultValue="aegis-security:latest" id="docker-image-input" />
+              <Input type="text" defaultValue="aegis-agent:latest" id="docker-image-input" />
               <p className="text-xs text-muted-foreground mt-1.5">Image used for sandboxed scans</p>
             </div>
             <div>

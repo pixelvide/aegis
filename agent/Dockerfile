@@ -3,7 +3,7 @@
 # Pre-installed tools: semgrep, composer, npm, php, python3, go, govulncheck
 # Usage:
 #   make docker     (from agent/ directory — builds binaries + image)
-#   docker run --rm -v /path/to/project:/workspace aegis-security:latest sharingan
+#   docker run --rm -v /path/to/project:/workspace aegis-agent:latest sharingan
 #
 # The workspace is mounted at /workspace. Findings are written to /workspace/.aegis/
 

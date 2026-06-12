@@ -2,7 +2,7 @@
 
 # ── Configuration ─────────────────────────────────────────────────
 LOCALHARNESS_REPO := ../../local-harness
-IMAGE := aegis-security:latest
+IMAGE := aegis-agent:latest
 VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo "0.0.0-dev")
 
 # ── Build Aegis binary (native) ──────────────────────────────────

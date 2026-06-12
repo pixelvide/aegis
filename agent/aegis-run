@@ -21,7 +21,7 @@
 
 set -euo pipefail
 
-IMAGE="${AEGIS_IMAGE:-aegis-security:latest}"
+IMAGE="${AEGIS_IMAGE:-aegis-agent:latest}"
 WORKSPACE=""
 ARGS=()
 
