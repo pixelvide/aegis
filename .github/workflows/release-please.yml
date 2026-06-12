@@ -68,35 +68,18 @@ jobs:
         with:
           path: aegis
 
-      # The agent depends on the localharness repo for the runtime binary.
-      # In CI we clone it; locally `make docker` uses a relative path.
       - uses: actions/checkout@v4
         with:
           repository: pixelvide/localharness
           token: ${{ secrets.LOCALHARNESS_PAT }}
-          path: local-harness
+          path: localharness
 
-      - uses: actions/setup-go@v5
-        with:
-          go-version: '1.25'
-          cache-dependency-path: |
-            aegis/agent/go.sum
-            local-harness/go.sum
-
-      - name: Cross-compile binaries
+      - name: Prepare build context
         run: |
-          mkdir -p aegis/agent/bin
-
-          # Build localharness runtime (linux/amd64)
-          cd local-harness
-          GOOS=linux GOARCH=amd64 go build \
-            -ldflags="-s -w -X github.com/pixelvide/localharness/internal/config.HarnessVersion=${{ needs.release-please.outputs.tag_name }}" \
-            -o ../aegis/agent/bin/localharness ./cmd/localharness
-          cd ..
-
-          # Build aegis agent (linux/amd64)
-          cd aegis/agent
-          GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o bin/aegis .
+          mkdir -p build-context
+          rsync -a --exclude='.git' localharness/ build-context/localharness/
+          rsync -a --exclude='.git' aegis/agent/ build-context/agent/
+          cp aegis/agent/Dockerfile build-context/Dockerfile
 
       - name: Log in to GHCR
         uses: docker/login-action@v3
@@ -118,8 +101,9 @@ jobs:
       - name: Build and push
         uses: docker/build-push-action@v6
         with:
-          context: aegis/agent
-          file: aegis/agent/Dockerfile
+          context: build-context
+          file: build-context/Dockerfile
+          build-args: VERSION=${{ needs.release-please.outputs.tag_name }}
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}

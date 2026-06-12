@@ -1,12 +1,49 @@
-# Aegis Security Agent — Docker Runtime
+# Aegis Security Agent — Multi-Stage Docker Build
 #
 # Pre-installed tools: semgrep, composer, npm, php, python3, go, govulncheck
-# Usage:
-#   make docker     (from agent/ directory — builds binaries + image)
-#   docker run --rm -v /path/to/project:/workspace aegis-agent:latest sharingan
 #
-# The workspace is mounted at /workspace. Findings are written to /workspace/.aegis/
+# Build context layout (constructed by Makefile or CI):
+#   <context>/
+#   ├── Dockerfile
+#   ├── localharness/   ← localharness source (cloned or copied)
+#   └── agent/          ← aegis agent source
+#
+# Usage:
+#   cd agent && make docker
+#   docker run --rm -v /path/to/project:/workspace aegis-agent:latest sharingan
 
+# ── Stage 1: Build binaries ──────────────────────────────────────
+FROM golang:1.25-alpine AS builder
+
+RUN apk add --no-cache git
+
+WORKDIR /build
+
+# Copy localharness source
+COPY localharness/ ./localharness/
+
+# Copy agent source
+COPY agent/ ./agent/
+
+# Fix the go.mod replace directive to match Docker build layout
+RUN cd agent && go mod edit -replace github.com/pixelvide/localharness=../localharness
+
+# Download dependencies
+RUN cd localharness && go mod download
+RUN cd agent && go mod download
+
+# Build localharness runtime
+ARG VERSION=dev
+RUN cd localharness && CGO_ENABLED=0 GOOS=linux go build \
+    -ldflags="-s -w -X github.com/pixelvide/localharness/internal/config.HarnessVersion=${VERSION}" \
+    -o /out/localharness ./cmd/localharness
+
+# Build aegis agent
+RUN cd agent && CGO_ENABLED=0 GOOS=linux go build \
+    -ldflags="-s -w" \
+    -o /out/aegis .
+
+# ── Stage 2: Runtime ─────────────────────────────────────────────
 FROM ubuntu:24.04
 
 LABEL maintainer="pixelvide"
@@ -51,12 +88,9 @@ RUN go install golang.org/x/vuln/cmd/govulncheck@latest
 # ── Python security tools ─────────────────────────────────────────
 RUN pipx install pip-audit
 
-# ── LocalHarness + Aegis binaries ─────────────────────────────────
-# These are pre-compiled binaries built by `make docker` before the image build.
-# localharness is the agent runtime engine; aegis is the security-focused wrapper.
-COPY bin/localharness /usr/local/bin/localharness
-COPY bin/aegis /usr/local/bin/aegis
-RUN chmod +x /usr/local/bin/localharness /usr/local/bin/aegis
+# ── Copy pre-built binaries from builder ─────────────────────────
+COPY --from=builder /out/localharness /usr/local/bin/localharness
+COPY --from=builder /out/aegis /usr/local/bin/aegis
 
 ENV LOCALHARNESS_BIN=/usr/local/bin/localharness
 

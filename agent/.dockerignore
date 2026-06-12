@@ -1,5 +1,9 @@
-# Don't send the entire repo to Docker daemon — only what's needed
-*
-!bin/localharness
-!bin/aegis
-!Dockerfile
+# Exclude build artifacts and unnecessary files from Docker context
+**/.git
+**/.gitignore
+**/.build-context
+**/bin/
+**/node_modules
+**/.DS_Store
+**/*.md
+!agent/Dockerfile
