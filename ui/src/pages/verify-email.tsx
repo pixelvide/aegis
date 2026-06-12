@@ -76,9 +76,9 @@ export default function VerifyEmailPage() {
 
         {(status === "error" || status === "invalid") && (
           <div className="space-y-3">
-            <Link to="/profile">
+            <Link to="/profile/emails">
               <Button variant="outline" className="w-full">
-                Go to Profile — Resend verification
+                Go to Emails — Resend verification
               </Button>
             </Link>
             <Link to="/">

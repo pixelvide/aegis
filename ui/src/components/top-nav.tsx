@@ -22,6 +22,9 @@ const routeNames: Record<string, string> = {
   "/agents": "Agents",
   "/settings": "Settings",
   "/profile": "Profile",
+  "/profile/emails": "Emails",
+  "/profile/access-management/authentication": "Authentication",
+  "/profile/access-management/sessions": "Active Sessions",
   "/reports": "Reports",
   "/analytics": "Analytics",
 }

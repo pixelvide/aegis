@@ -7,8 +7,7 @@ import { InputOTP, InputOTPGroup, InputOTPSlot } from "@/components/ui/input-otp
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import {
   Lock, Loader2, Copy, Check, ShieldCheck, ShieldOff,
-  Mail, Plus, Star, Trash2, Send, Smartphone, Monitor,
-  RefreshCw, Eye, EyeOff, KeyRound, LogOut, AlertTriangle,
+  Mail, Smartphone, RefreshCw, Eye, EyeOff, KeyRound, AlertTriangle, Trash2,
 } from "lucide-react"
 import { useAuth } from "@/lib/auth-context"
 import { request } from "@/lib/api"
@@ -38,56 +37,33 @@ interface MFADevice {
   created_at: string
 }
 
-interface Session {
-  id: string
-  ip_address: string
-  user_agent: string
-  browser: string
-  os: string
-  device_type: string
-  created_at: string
-  last_active_at: string
-  expires_at: string
-  current: boolean
-}
-
 // ─── Tab Constants ──────────────────────────────────────────────────────────
 
-type Tab = "emails" | "password" | "authentication" | "sessions"
+type AuthTab = "two-factor" | "password"
 
-const TABS: { id: Tab; label: string; icon: React.ReactNode }[] = [
-  { id: "emails", label: "Emails", icon: <Mail className="h-4 w-4" /> },
+const AUTH_TABS: { id: AuthTab; label: string; icon: React.ReactNode }[] = [
+  { id: "two-factor", label: "Two Factor Authentication", icon: <ShieldCheck className="h-4 w-4" /> },
   { id: "password", label: "Password", icon: <KeyRound className="h-4 w-4" /> },
-  { id: "authentication", label: "Authentication", icon: <Lock className="h-4 w-4" /> },
-  { id: "sessions", label: "Active Sessions", icon: <Monitor className="h-4 w-4" /> },
 ]
 
-// ─── Profile Page ───────────────────────────────────────────────────────────
+// ─── Authentication Page ────────────────────────────────────────────────────
 
-export default function ProfilePage() {
-  const { user } = useAuth()
-  const [activeTab, setActiveTab] = useState<Tab>("emails")
+export default function AuthenticationPage() {
+  const [activeTab, setActiveTab] = useState<AuthTab>("two-factor")
 
   return (
     <div className="space-y-6">
-      {/* User header */}
-      <div className="flex items-center gap-4">
-        <div className="flex h-16 w-16 items-center justify-center rounded-full bg-muted text-xl font-semibold text-muted-foreground uppercase">
-          {user?.avatar_url ? (
-            <img src={user.avatar_url} alt={user.name} className="h-16 w-16 rounded-full object-cover" />
-          ) : (
-            user?.name?.charAt(0) || "?"
-          )}
-        </div>
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight">{user?.name || "Profile"}</h1>
-          <p className="text-sm text-muted-foreground">{user?.email}</p>
-        </div>
+      {/* Page header */}
+      <div>
+        <h1 className="text-2xl font-semibold tracking-tight">Authentication</h1>
+        <p className="text-sm text-muted-foreground">
+          Manage how you sign in to your account.
+        </p>
       </div>
 
       {/* Tabs */}
       <div className="flex border-b border-border">
-        {TABS.map((tab) => (
+        {AUTH_TABS.map((tab) => (
           <button
             key={tab.id}
             className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${
@@ -104,200 +80,8 @@ export default function ProfilePage() {
       </div>
 
       {/* Tab content */}
-      {activeTab === "emails" && <EmailsTab />}
+      {activeTab === "two-factor" && <TwoFactorTab />}
       {activeTab === "password" && <PasswordTab />}
-      {activeTab === "authentication" && <AuthenticationTab />}
-      {activeTab === "sessions" && <SessionsTab />}
-    </div>
-  )
-}
-
-// ─── Emails Tab ─────────────────────────────────────────────────────────────
-
-function EmailsTab() {
-  const [emails, setEmails] = useState<UserEmail[]>([])
-  const [loading, setLoading] = useState(true)
-  const [newEmail, setNewEmail] = useState("")
-  const [adding, setAdding] = useState(false)
-  const [showAddForm, setShowAddForm] = useState(false)
-
-
-  const fetchEmails = useCallback(async () => {
-    try {
-      const data = await request<{ emails: UserEmail[] }>("/profile/emails")
-      setEmails(data.emails || [])
-    } catch {
-      // ignore
-    } finally {
-      setLoading(false)
-    }
-  }, [])
-
-  useEffect(() => {
-    let cancelled = false
-    request<{ emails: UserEmail[] }>("/profile/emails")
-      .then((data) => { if (!cancelled) { setEmails(data.emails || []); setLoading(false) } })
-      .catch(() => { if (!cancelled) setLoading(false) })
-    return () => { cancelled = true }
-  }, [])
-
-  const handleAdd = async (e: React.FormEvent) => {
-    e.preventDefault()
-    setAdding(true)
-    try {
-      await request("/profile/emails", {
-        method: "POST",
-        body: JSON.stringify({ email: newEmail }),
-      })
-      setNewEmail("")
-      setShowAddForm(false)
-      toast.success("Email added. Check your inbox for a verification link.")
-      fetchEmails()
-    } catch (err: unknown) {
-      toast.error(err instanceof Error ? err.message : "Failed to add email")
-    } finally {
-      setAdding(false)
-    }
-  }
-
-  const handleRemove = async (id: string) => {
-    try {
-      await request(`/profile/emails/${id}`, { method: "DELETE" })
-      fetchEmails()
-    } catch (err: unknown) {
-      toast.error(err instanceof Error ? err.message : "Failed to remove email")
-    }
-  }
-
-  const handleSetPrimary = async (id: string) => {
-    try {
-      await request(`/profile/emails/${id}/set-primary`, { method: "POST" })
-      toast.success("Primary email updated")
-      fetchEmails()
-    } catch (err: unknown) {
-      toast.error(err instanceof Error ? err.message : "Failed to set primary")
-    }
-  }
-
-  const handleSendVerification = async (id: string) => {
-    try {
-      await request(`/profile/emails/${id}/send-verification`, { method: "POST" })
-      toast.success("Verification email sent")
-    } catch (err: unknown) {
-      toast.error(err instanceof Error ? err.message : "Failed to send verification")
-    }
-  }
-
-  if (loading) {
-    return <div className="flex items-center justify-center py-12"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>
-  }
-
-  return (
-    <div className="space-y-6">
-      <Card>
-        <CardHeader className="flex flex-row items-center justify-between">
-          <div>
-            <CardTitle>Email Addresses</CardTitle>
-            <CardDescription>Manage your email addresses. Your primary email is used for login and notifications.</CardDescription>
-          </div>
-          {!showAddForm && (
-            <Button variant="outline" size="sm" onClick={() => setShowAddForm(true)}>
-              <Plus className="mr-2 h-4 w-4" />
-              Add new email
-            </Button>
-          )}
-        </CardHeader>
-        <CardContent className="space-y-3">
-
-
-          {/* Inline add form */}
-          {showAddForm && (
-            <div className="rounded-lg border border-border p-4 space-y-3">
-              <h4 className="text-sm font-semibold">Add new email</h4>
-              <form onSubmit={handleAdd} className="space-y-3">
-                <div>
-                  <label className="text-sm font-medium text-muted-foreground">Email address</label>
-                  <Input
-                    type="email"
-                    placeholder="name@example.com"
-                    value={newEmail}
-                    onChange={(e) => setNewEmail(e.target.value)}
-                    required
-                    autoFocus
-                    className="mt-1"
-                  />
-                </div>
-                <div className="flex items-center gap-2">
-                  <Button type="submit" size="sm" disabled={adding}>
-                    {adding && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                    Add email address
-                  </Button>
-                  <Button type="button" variant="outline" size="sm" onClick={() => { setShowAddForm(false); setNewEmail("") }}>
-                    Cancel
-                  </Button>
-                </div>
-              </form>
-            </div>
-          )}
-
-          {/* Email list */}
-          {emails.map((email) => (
-            <div key={email.id} className="flex items-center justify-between rounded-lg border border-border p-3">
-              <div className="flex items-center gap-3">
-                <Mail className="h-4 w-4 text-muted-foreground" />
-                <div>
-                  <div className="flex items-center gap-2">
-                    <span className="text-sm font-medium">{email.email}</span>
-                    {email.is_primary && (
-                      <Badge variant="default" className="text-xs">
-                        <Star className="mr-1 h-3 w-3" /> Primary
-                      </Badge>
-                    )}
-                    {email.verified ? (
-                      <Badge variant="secondary" className="text-xs text-green-600">Verified</Badge>
-                    ) : (
-                      <Badge variant="outline" className="text-xs text-yellow-600">Unverified</Badge>
-                    )}
-                  </div>
-                </div>
-              </div>
-              <div className="flex items-center gap-1">
-                {!email.verified && (
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => handleSendVerification(email.id)}
-                    title="Send verification email"
-                  >
-                    <Send className="h-4 w-4" />
-                  </Button>
-                )}
-                {!email.is_primary && email.verified && (
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => handleSetPrimary(email.id)}
-                    title="Set as primary"
-                  >
-                    <Star className="h-4 w-4" />
-                  </Button>
-                )}
-                {!email.is_primary && (
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => handleRemove(email.id)}
-                    title="Remove email"
-                    className="text-destructive hover:text-destructive"
-                  >
-                    <Trash2 className="h-4 w-4" />
-                  </Button>
-                )}
-              </div>
-            </div>
-          ))}
-        </CardContent>
-      </Card>
     </div>
   )
 }
@@ -305,26 +89,6 @@ function EmailsTab() {
 // ─── Password Tab ───────────────────────────────────────────────────────────
 
 function PasswordTab() {
-  return (
-    <div className="space-y-6">
-      <ChangePasswordSection />
-    </div>
-  )
-}
-
-// ─── Authentication Tab ─────────────────────────────────────────────────────
-
-function AuthenticationTab() {
-  return (
-    <div className="space-y-6">
-      <MFASection />
-    </div>
-  )
-}
-
-// ── Change Password ──
-
-function ChangePasswordSection() {
   const [currentPassword, setCurrentPassword] = useState("")
   const [newPassword, setNewPassword] = useState("")
   const [confirmPassword, setConfirmPassword] = useState("")
@@ -359,39 +123,44 @@ function ChangePasswordSection() {
   }
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Change Password</CardTitle>
-      </CardHeader>
-      <CardContent>
-        <form onSubmit={handleSubmit} className="space-y-4 max-w-md">
-          <div className="space-y-2">
-            <label className="text-sm font-medium">Current Password</label>
-            <Input type="password" value={currentPassword} onChange={(e) => setCurrentPassword(e.target.value)} required />
-          </div>
-          <div className="space-y-2">
-            <label className="text-sm font-medium">New Password</label>
-            <Input type="password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} required minLength={8} />
-          </div>
-          <div className="space-y-2">
-            <label className="text-sm font-medium">Confirm New Password</label>
-            <Input type="password" value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)} required />
-          </div>
+    <div className="space-y-6">
+      <Card>
+        <CardHeader>
+          <CardTitle>Change Password</CardTitle>
+          <CardDescription>
+            Update your password. You'll need to enter your current password to confirm.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <form onSubmit={handleSubmit} className="space-y-4 max-w-md">
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Current Password</label>
+              <Input type="password" value={currentPassword} onChange={(e) => setCurrentPassword(e.target.value)} required />
+            </div>
+            <div className="space-y-2">
+              <label className="text-sm font-medium">New Password</label>
+              <Input type="password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} required minLength={8} />
+            </div>
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Confirm New Password</label>
+              <Input type="password" value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)} required />
+            </div>
 
-          <Button type="submit" disabled={loading}>
-            {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-            <Lock className="mr-2 h-4 w-4" />
-            Update Password
-          </Button>
-        </form>
-      </CardContent>
-    </Card>
+            <Button type="submit" disabled={loading}>
+              {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              <Lock className="mr-2 h-4 w-4" />
+              Update Password
+            </Button>
+          </form>
+        </CardContent>
+      </Card>
+    </div>
   )
 }
 
-// ── MFA Section ──
+// ─── Two Factor Tab ─────────────────────────────────────────────────────────
 
-function MFASection() {
+function TwoFactorTab() {
   const { user, refreshUser } = useAuth()
   const [devices, setDevices] = useState<MFADevice[]>([])
   const [loading, setLoading] = useState(true)
@@ -903,143 +672,4 @@ function MFASection() {
       />
     </>
   )
-}
-
-// ─── Sessions Tab ───────────────────────────────────────────────────────────
-
-function SessionsTab() {
-  const [sessions, setSessions] = useState<Session[]>([])
-  const [loading, setLoading] = useState(true)
-  const [revoking, setRevoking] = useState("")
-
-  const fetchSessions = useCallback(async () => {
-    try {
-      const data = await request<{ sessions: Session[] }>("/profile/sessions")
-      setSessions(data.sessions || [])
-    } catch {
-      // ignore
-    } finally {
-      setLoading(false)
-    }
-  }, [])
-
-  useEffect(() => {
-    let cancelled = false
-    request<{ sessions: Session[] }>("/profile/sessions")
-      .then((data) => { if (!cancelled) { setSessions(data.sessions || []); setLoading(false) } })
-      .catch(() => { if (!cancelled) setLoading(false) })
-    return () => { cancelled = true }
-  }, [])
-
-  const handleRevoke = async (id: string) => {
-    setRevoking(id)
-    try {
-      await request(`/profile/sessions/${id}`, { method: "DELETE" })
-      toast.success("Session revoked")
-      fetchSessions()
-    } catch (err: unknown) {
-      toast.error(err instanceof Error ? err.message : "Failed to revoke session")
-    } finally {
-      setRevoking("")
-    }
-  }
-
-  const handleRevokeAll = async () => {
-    try {
-      await request("/profile/sessions", { method: "DELETE" })
-      toast.success("All other sessions revoked")
-      fetchSessions()
-    } catch (err: unknown) {
-      toast.error(err instanceof Error ? err.message : "Failed to revoke sessions")
-    }
-  }
-
-  if (loading) {
-    return <div className="flex items-center justify-center py-12"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>
-  }
-
-  return (
-    <div className="space-y-6">
-      <Card>
-        <CardHeader>
-          <div className="flex items-center justify-between">
-            <div>
-              <CardTitle>Active Sessions</CardTitle>
-              <CardDescription>Devices and browsers where you're currently signed in.</CardDescription>
-            </div>
-            {sessions.length > 1 && (
-              <Button variant="outline" size="sm" className="text-destructive" onClick={handleRevokeAll}>
-                <LogOut className="mr-2 h-4 w-4" /> Sign out all other sessions
-              </Button>
-            )}
-          </div>
-        </CardHeader>
-        <CardContent className="space-y-3">
-
-          {sessions.length === 0 ? (
-            <p className="text-sm text-muted-foreground py-4 text-center">No active sessions found.</p>
-          ) : (
-            sessions.map((session) => (
-              <div key={session.id} className="flex items-center justify-between rounded-lg border border-border p-4">
-                <div className="flex items-center gap-4">
-                  <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-muted">
-                    {session.device_type === "mobile" ? (
-                      <Smartphone className="h-5 w-5 text-muted-foreground" />
-                    ) : (
-                      <Monitor className="h-5 w-5 text-muted-foreground" />
-                    )}
-                  </div>
-                  <div className="space-y-1">
-                    <div className="flex items-center gap-2">
-                      <span className="text-sm font-semibold">
-                        {session.browser || "Unknown"} · {session.os || "Unknown"}
-                      </span>
-                      {session.current && (
-                        <Badge variant="default" className="text-xs">Current Session</Badge>
-                      )}
-                    </div>
-                    <div className="text-xs text-muted-foreground space-y-0.5">
-                      <div>IP: {session.ip_address} · {session.device_type || "desktop"}</div>
-                      <div>Signed in {formatRelativeTime(session.created_at)} · Last active {formatRelativeTime(session.last_active_at)}</div>
-                    </div>
-                  </div>
-                </div>
-                {!session.current && (
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => handleRevoke(session.id)}
-                    disabled={revoking === session.id}
-                    className="text-destructive hover:text-destructive"
-                  >
-                    {revoking === session.id ? (
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                    ) : (
-                      <LogOut className="h-4 w-4" />
-                    )}
-                  </Button>
-                )}
-              </div>
-            ))
-          )}
-        </CardContent>
-      </Card>
-    </div>
-  )
-}
-
-// ─── Utilities ──────────────────────────────────────────────────────────────
-
-function formatRelativeTime(dateStr: string): string {
-  const date = new Date(dateStr)
-  const now = new Date()
-  const diffMs = now.getTime() - date.getTime()
-  const diffMin = Math.floor(diffMs / 60000)
-
-  if (diffMin < 1) return "just now"
-  if (diffMin < 60) return `${diffMin}m ago`
-  const diffHr = Math.floor(diffMin / 60)
-  if (diffHr < 24) return `${diffHr}h ago`
-  const diffDay = Math.floor(diffHr / 24)
-  return `${diffDay}d ago`
 }

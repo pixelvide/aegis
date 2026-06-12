@@ -1,10 +1,15 @@
 import { NavLink, useLocation } from "react-router-dom"
+import { useState } from "react"
 import {
   User,
   Building2,
   LogOut,
   ChevronsUpDown,
   Shield,
+  Lock,
+  Monitor,
+  Mail,
+  ChevronRight,
 } from "lucide-react"
 import {
   Sidebar,
@@ -17,9 +22,17 @@ import {
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
+  SidebarMenuSub,
+  SidebarMenuSubItem,
+  SidebarMenuSubButton,
   SidebarRail,
   useSidebar,
 } from "@/components/ui/sidebar"
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@radix-ui/react-collapsible"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -31,7 +44,13 @@ import { useAuth } from "@/lib/auth-context"
 
 const accountNav = [
   { to: "/orgs", icon: Building2, label: "Organizations" },
-  { to: "/profile", icon: User, label: "Profile & Security" },
+  { to: "/profile", icon: User, label: "Profile" },
+  { to: "/profile/emails", icon: Mail, label: "Emails" },
+]
+
+const accessManagementNav = [
+  { to: "/profile/access-management/authentication", icon: Lock, label: "Authentication" },
+  { to: "/profile/access-management/sessions", icon: Monitor, label: "Active Sessions" },
 ]
 
 function userInitials(name: string): string {
@@ -49,8 +68,12 @@ export function BaseDomainSidebar() {
   const { isMobile } = useSidebar()
   const { user, logout } = useAuth()
 
+  // Auto-expand Access Management if current path is within it
+  const isAccessManagementPath = location.pathname.startsWith("/profile/access-management")
+  const [accessOpen, setAccessOpen] = useState(isAccessManagementPath)
+
   const isActive = (to: string) => {
-    if (to === "/") return location.pathname === "/"
+    if (to === "/" || to === "/profile") return location.pathname === to
     return location.pathname.startsWith(to)
   }
 
@@ -64,7 +87,7 @@ export function BaseDomainSidebar() {
         <SidebarMenu>
           <SidebarMenuItem>
             <SidebarMenuButton size="lg" asChild>
-              <NavLink to="/orgs">
+              <NavLink to="/profile">
                 <div className="flex size-8 items-center justify-center rounded-lg bg-sidebar-primary text-sidebar-primary-foreground">
                   <Shield className="h-4 w-4" />
                 </div>
@@ -79,7 +102,7 @@ export function BaseDomainSidebar() {
       </SidebarHeader>
 
       <SidebarContent>
-        {/* Main Navigation */}
+        {/* Account Navigation */}
         <SidebarGroup>
           <SidebarGroupLabel>Account</SidebarGroupLabel>
           <SidebarGroupContent>
@@ -98,6 +121,41 @@ export function BaseDomainSidebar() {
                   </SidebarMenuButton>
                 </SidebarMenuItem>
               ))}
+            </SidebarMenu>
+          </SidebarGroupContent>
+        </SidebarGroup>
+
+        {/* Access Management — Collapsible */}
+        <SidebarGroup>
+          <SidebarGroupContent>
+            <SidebarMenu>
+              <Collapsible open={accessOpen} onOpenChange={setAccessOpen}>
+                <SidebarMenuItem>
+                  <CollapsibleTrigger asChild>
+                    <SidebarMenuButton tooltip="Access Management">
+                      <User />
+                      <span>Access Management</span>
+                      <ChevronRight className={`ml-auto h-4 w-4 transition-transform duration-200 ${accessOpen ? "rotate-90" : ""}`} />
+                    </SidebarMenuButton>
+                  </CollapsibleTrigger>
+                  <CollapsibleContent>
+                    <SidebarMenuSub>
+                      {accessManagementNav.map((item) => (
+                        <SidebarMenuSubItem key={item.to}>
+                          <SidebarMenuSubButton
+                            asChild
+                            isActive={isActive(item.to)}
+                          >
+                            <NavLink to={item.to}>
+                              <span>{item.label}</span>
+                            </NavLink>
+                          </SidebarMenuSubButton>
+                        </SidebarMenuSubItem>
+                      ))}
+                    </SidebarMenuSub>
+                  </CollapsibleContent>
+                </SidebarMenuItem>
+              </Collapsible>
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>

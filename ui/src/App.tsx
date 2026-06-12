@@ -20,7 +20,10 @@ import FindingsPage from "@/pages/findings"
 import FindingDetailPage from "@/pages/finding-detail"
 import AgentsPage from "@/pages/agents"
 import SettingsPage from "@/pages/settings"
-import ProfilePage from "@/pages/profile"
+import ProfileOverviewPage from "@/pages/profile"
+import EmailsPage from "@/pages/profile/emails"
+import AuthenticationPage from "@/pages/profile/authentication"
+import SessionsPage from "@/pages/profile/sessions"
 import ProjectsPage from "@/pages/projects"
 import OrgsPage from "@/pages/orgs"
 import LoginPage from "@/pages/login"
@@ -140,8 +143,14 @@ function BaseDomainLayout() {
 
   // Determine which page to render based on path
   let page = null
-  if (location.pathname.startsWith("/profile")) {
-    page = <ProfilePage />
+  if (location.pathname === "/profile/access-management/authentication") {
+    page = <AuthenticationPage />
+  } else if (location.pathname === "/profile/access-management/sessions") {
+    page = <SessionsPage />
+  } else if (location.pathname === "/profile/emails") {
+    page = <EmailsPage />
+  } else if (location.pathname.startsWith("/profile")) {
+    page = <ProfileOverviewPage />
   } else if (location.pathname.startsWith("/orgs")) {
     page = <OrgsPage />
   }
@@ -225,7 +234,10 @@ function AppLayout() {
         <Route path="/reset-password" element={<ResetPasswordPage />} />
         <Route path="/verify-email" element={<VerifyEmailPage />} />
         <Route path="/verify-email-pending" element={<VerifyEmailPendingPage />} />
-        <Route path="/profile" element={<ProfilePage />} />
+        <Route path="/profile" element={<ProfileOverviewPage />} />
+        <Route path="/profile/emails" element={<EmailsPage />} />
+        <Route path="/profile/access-management/authentication" element={<AuthenticationPage />} />
+        <Route path="/profile/access-management/sessions" element={<SessionsPage />} />
         <Route path="/orgs" element={<OrgsPage />} />
       </Routes>
     )
@@ -309,6 +321,9 @@ export default function App() {
           <Route path="/verify-email" element={<VerifyEmailPage />} />
           <Route path="/verify-email-pending" element={<VerifyEmailPendingPage />} />
           <Route path="/profile" element={<BaseDomainLayout />} />
+          <Route path="/profile/emails" element={<BaseDomainLayout />} />
+          <Route path="/profile/access-management/authentication" element={<BaseDomainLayout />} />
+          <Route path="/profile/access-management/sessions" element={<BaseDomainLayout />} />
           <Route path="/orgs" element={<BaseDomainLayout />} />
           <Route path="/*" element={<AppLayout />} />
         </Routes>
