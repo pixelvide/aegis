@@ -265,8 +265,6 @@ Releases are managed by [release-please](https://github.com/googleapis/release-p
      - **Server image** → `ghcr.io/pixelvide/aegis`
      - **Agent image** → `ghcr.io/pixelvide/aegis-agent`
 
-> **Note:** The agent image build requires the `LOCALHARNESS_PAT` secret (a GitHub PAT with read access to the `pixelvide/localharness` repo) to clone and cross-compile the localharness runtime.
-
 ### Docker Registry
 
 Released images are pushed to GitHub Container Registry (GHCR):

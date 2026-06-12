@@ -71,7 +71,6 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: pixelvide/localharness
-          token: ${{ secrets.LOCALHARNESS_PAT }}
           path: localharness
 
       - name: Prepare build context
