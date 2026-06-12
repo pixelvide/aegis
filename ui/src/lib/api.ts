@@ -356,22 +356,61 @@ export const projectsApi = {
   get: (slug: string) => request<Project>(`/projects/${encodeURIComponent(slug)}`),
 }
 
-// ─── Tokens (tenant-scoped) ─────────────────────────────────────────────────
+// ─── Project Tokens (tenant-scoped, per-project) ────────────────────────────
 
-export const tokensApi = {
-  list: () => {
-    if (!_currentProjectId) throw new Error("No project selected")
-    return request<APIToken[]>(`/projects/${_currentProjectId}/tokens`)
+export const projectTokensApi = {
+  list: (projectId?: string) => {
+    const pid = projectId || _currentProjectId
+    if (!pid) throw new Error("No project selected")
+    return request<APIToken[]>(`/projects/${pid}/tokens`)
   },
-  create: (data: { name: string; project_id?: string; expires_in?: number }) => {
-    const projectId = data.project_id || _currentProjectId
-    if (!projectId) throw new Error("No project selected")
-    const payload = { ...data, project_id: projectId }
-    return request<CreateTokenResponse>(`/projects/${projectId}/tokens`, { method: "POST", body: JSON.stringify(payload) })
+  create: (data: { name: string; expires_in?: number }, projectId?: string) => {
+    const pid = projectId || _currentProjectId
+    if (!pid) throw new Error("No project selected")
+    return request<CreateTokenResponse>(`/projects/${pid}/tokens`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    })
   },
-  revoke: (id: string) => {
-    if (!_currentProjectId) throw new Error("No project selected")
-    return request<void>(`/projects/${_currentProjectId}/tokens/${encodeURIComponent(id)}`, { method: "DELETE" })
+  revoke: (tokenId: string, projectId?: string) => {
+    const pid = projectId || _currentProjectId
+    if (!pid) throw new Error("No project selected")
+    return request<void>(`/projects/${pid}/tokens/${encodeURIComponent(tokenId)}`, {
+      method: "DELETE",
+    })
   },
 }
 
+// ─── Org Tokens (tenant-scoped, org-wide, admin/owner) ──────────────────────
+
+export const orgTokensApi = {
+  list: () => request<APIToken[]>("/tokens"),
+  create: (data: { name: string; expires_in?: number }) =>
+    request<CreateTokenResponse>("/tokens", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+  revoke: (id: string) =>
+    request<void>(`/tokens/${encodeURIComponent(id)}`, { method: "DELETE" }),
+}
+
+// ─── Org Feature Flags (tenant-scoped) ──────────────────────────────────────
+
+export interface OrgFeatureFlag {
+  name: string
+  provisioned: boolean
+  enabled: boolean
+  description: string
+}
+
+export const orgFeaturesApi = {
+  list: () => request<OrgFeatureFlag[]>("/org-features"),
+  update: (flag: string, enabled: boolean) =>
+    request<void>(`/org-features/${encodeURIComponent(flag)}`, {
+      method: "PATCH",
+      body: JSON.stringify({ enabled }),
+    }),
+}
+
+// Legacy alias for backward compatibility
+export const tokensApi = projectTokensApi

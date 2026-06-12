@@ -45,6 +45,7 @@ export type ErrorCode =
   | "denied"
   | "feature_disabled"
   | "mfa_required_by_org"
+  | "feature_not_provisioned"
   // rate_limit_error
   | "exceeded"
   // server_error
@@ -99,6 +100,7 @@ export const ERROR_CODES: Record<string, ErrorEntry> = {
   "permission_error.denied": { type: "permission_error", code: "denied", ref: "E60001", status: 403, message: "Insufficient permissions" },
   "permission_error.feature_disabled": { type: "permission_error", code: "feature_disabled", ref: "E60002", status: 403, message: "Feature is not enabled" },
   "permission_error.mfa_required_by_org": { type: "permission_error", code: "mfa_required_by_org", ref: "E60003", status: 403, message: "This organization requires MFA to be enabled" },
+  "permission_error.feature_not_provisioned": { type: "permission_error", code: "feature_not_provisioned", ref: "E60004", status: 403, message: "Feature is not available for this organization" },
 
   // rate_limit_error
   "rate_limit_error.exceeded": { type: "rate_limit_error", code: "exceeded", ref: "E70001", status: 429, message: "Too many requests" },

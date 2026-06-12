@@ -1025,17 +1025,18 @@ Attach a PoC exploit to a finding.
 
 ---
 
-## Token Management 🔒🏢
+## Token Management — Project-Scoped 🔒🏢
 
-### POST `/tokens`
+Tokens scoped to a specific project. Any org member can manage project tokens.
 
-Generate a new API token. The plaintext token is returned **once** and never stored.
+### POST `/projects/{projectId}/tokens`
+
+Generate a new API token scoped to a specific project. The plaintext token is returned **once** and never stored.
 
 **Request:**
 ```json
 {
   "name": "CI Pipeline Token",
-  "project_id": "uuid",
   "expires_in": 90
 }
 ```
@@ -1043,7 +1044,6 @@ Generate a new API token. The plaintext token is returned **once** and never sto
 | Field | Required | Description |
 |---|---|---|
 | `name` | Yes | Display name (max 100 chars) |
-| `project_id` | No | Scope to a specific project (empty = org-wide) |
 | `expires_in` | No | Days until expiry (0 = never) |
 
 **Response (201):**
@@ -1052,6 +1052,7 @@ Generate a new API token. The plaintext token is returned **once** and never sto
   "token": "aegis_a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6",
   "info": {
     "id": "uuid",
+    "project_id": "project-uuid",
     "name": "CI Pipeline Token",
     "prefix": "aegis_a1b2c3d4",
     "created_by": "user-uuid",
@@ -1066,9 +1067,58 @@ Generate a new API token. The plaintext token is returned **once** and never sto
 
 ---
 
+### GET `/projects/{projectId}/tokens`
+
+List all tokens for a specific project (prefix and metadata only, never the full token).
+
+**Response (200):** Array of token objects
+
+---
+
+### DELETE `/projects/{projectId}/tokens/{id}`
+
+Revoke a project-scoped token. The token must belong to the specified project.
+
+**Response:** `204 No Content`
+
+**Errors:**
+- `403` — Token does not belong to this project
+- `404` — Token not found
+
+---
+
+## Token Management — Org-Wide 🔒🏢
+
+Org-wide tokens have access to all projects. Requires **admin or owner** role. Gated by the `org_wide_tokens` org feature flag.
+
+### POST `/tokens`
+
+Generate an org-wide API token. Requires `org_wide_tokens` feature to be active.
+
+**Request:**
+```json
+{
+  "name": "CI Pipeline Token",
+  "expires_in": 90
+}
+```
+
+| Field | Required | Description |
+|---|---|---|
+| `name` | Yes | Display name (max 100 chars) |
+| `expires_in` | No | Days until expiry (0 = never) |
+
+**Response (201):** Same format as project token response, but `project_id` is empty.
+
+**Errors:**
+- `403` — `permission_error.denied` — Admin/owner role required
+- `403` — `permission_error.feature_disabled` — `org_wide_tokens` feature not enabled
+
+---
+
 ### GET `/tokens`
 
-List all tokens (prefix and metadata only, never the full token).
+List all org tokens (project-scoped and org-wide). Admin/owner only.
 
 **Response (200):** Array of token objects
 
@@ -1076,9 +1126,55 @@ List all tokens (prefix and metadata only, never the full token).
 
 ### DELETE `/tokens/{id}`
 
-Revoke a token. Revoked tokens immediately stop working.
+Revoke an org token. Admin/owner only.
 
 **Response:** `204 No Content`
+
+---
+
+## Org Feature Flags 🔒🏢
+
+Per-org feature flags use a two-layer model:
+- **provisioned**: Set by platform admins — determines if the org can see the flag at all
+- **enabled**: Set by org owner — toggles the feature on/off
+
+A feature is **active** only when both `provisioned` AND `enabled` are `true`.
+
+### GET `/org-features`
+
+List all org-level feature flags. Any org member can read.
+
+**Response (200):**
+```json
+[
+  {
+    "name": "org_wide_tokens",
+    "provisioned": true,
+    "enabled": false,
+    "description": "Allow creating org-wide API tokens that access all projects"
+  }
+]
+```
+
+---
+
+### PATCH `/org-features/{flag}`
+
+Toggle the enabled state of an org feature flag. **Owner only.** The flag must be provisioned.
+
+**Request:**
+```json
+{ "enabled": true }
+```
+
+**Response (200):**
+```json
+{ "message": "feature flag updated" }
+```
+
+**Errors:**
+- `403` — `permission_error.denied` — Only the org owner can toggle flags
+- `403` — `permission_error.feature_not_provisioned` — Flag not found or not provisioned
 
 ---
 

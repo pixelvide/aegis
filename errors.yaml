@@ -124,6 +124,10 @@ types:
         ref: E60003
         status: 403
         message: "This organization requires MFA to be enabled"
+      feature_not_provisioned:
+        ref: E60004
+        status: 403
+        message: "Feature is not available for this organization"
 
   rate_limit_error:
     codes:

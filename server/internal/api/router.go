@@ -300,10 +300,19 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("PATCH /api/v1/agent/findings/{id}", s.agentMiddleware(s.handleAgentUpdateFinding))
 	s.mux.HandleFunc("POST /api/v1/agent/findings/{id}/exploits", s.agentMiddleware(s.handleAgentCreateExploit))
 
-	// ─── Token Management (user auth + org context) ─────────────────
-	s.mux.HandleFunc("POST /api/v1/tokens", s.protectedMiddleware(s.handleCreateToken))
-	s.mux.HandleFunc("GET /api/v1/tokens", s.protectedMiddleware(s.handleListTokens))
-	s.mux.HandleFunc("DELETE /api/v1/tokens/{id}", s.protectedMiddleware(s.handleRevokeToken))
+	// ─── Token Management — Project-Scoped (any org member) ─────────
+	s.mux.HandleFunc("POST /api/v1/projects/{projectId}/tokens", s.protectedMiddleware(s.handleCreateProjectToken))
+	s.mux.HandleFunc("GET /api/v1/projects/{projectId}/tokens", s.protectedMiddleware(s.handleListProjectTokens))
+	s.mux.HandleFunc("DELETE /api/v1/projects/{projectId}/tokens/{id}", s.protectedMiddleware(s.handleRevokeProjectToken))
+
+	// ─── Token Management — Org-Wide (admin/owner + feature flag) ────
+	s.mux.HandleFunc("POST /api/v1/tokens", s.protectedMiddleware(s.handleCreateOrgToken))
+	s.mux.HandleFunc("GET /api/v1/tokens", s.protectedMiddleware(s.handleListOrgTokens))
+	s.mux.HandleFunc("DELETE /api/v1/tokens/{id}", s.protectedMiddleware(s.handleRevokeOrgToken))
+
+	// ─── Org Feature Flags (tenant-scoped) ───────────────────────────
+	s.mux.HandleFunc("GET /api/v1/org-features", s.protectedMiddleware(s.handleListOrgFeatures))
+	s.mux.HandleFunc("PATCH /api/v1/org-features/{flag}", s.protectedMiddleware(s.handleUpdateOrgFeature))
 
 	// ─── Swagger / OpenAPI (public) ──────────────────────────────────
 	s.mux.HandleFunc("GET /api/v1/docs", s.handleSwaggerUI)

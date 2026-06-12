@@ -20,6 +20,9 @@ import FindingsPage from "@/pages/findings"
 import FindingDetailPage from "@/pages/finding-detail"
 import AgentsPage from "@/pages/agents"
 import SettingsPage from "@/pages/settings"
+import MembersPage from "@/pages/members"
+import ApiTokensPage from "@/pages/settings/api-tokens"
+import FeaturesPage from "@/pages/settings/features"
 import ProfileOverviewPage from "@/pages/profile"
 import EmailsPage from "@/pages/profile/emails"
 import AuthenticationPage from "@/pages/profile/authentication"
@@ -284,7 +287,10 @@ function AppLayout() {
                       <div className="px-4 lg:px-6">
                         <Routes>
                           <Route path="/" element={<ProjectsPage />} />
+                          <Route path="/members" element={<MembersPage />} />
                           <Route path="/settings" element={<SettingsPage />} />
+                          <Route path="/settings/api-tokens" element={<ApiTokensPage />} />
+                          <Route path="/settings/features" element={<FeaturesPage />} />
 
                           <Route path="/project/:projectId">
                             <Route path="dashboard" element={<DashboardPage />} />

@@ -1,14 +1,10 @@
 package api
 
 import (
-	"crypto/rand"
-	"encoding/hex"
 	"net/http"
 	"regexp"
 	"strings"
 	"time"
-
-	"golang.org/x/crypto/bcrypt"
 
 	"github.com/google/uuid"
 	"github.com/pixelvide/aegis/server/internal/middleware"
@@ -347,107 +343,6 @@ func (s *Server) handleAgentCreateExploit(w http.ResponseWriter, r *http.Request
 	writeResult(w, r, http.StatusCreated, exploit)
 }
 
-// ─── Token Management (user-facing) ─────────────────────────────────────────
-
-// CreateTokenRequest is the body for POST /api/v1/tokens.
-type CreateTokenRequest struct {
-	Name      string `json:"name"`
-	ProjectID string `json:"project_id,omitempty"`
-	ExpiresIn int    `json:"expires_in,omitempty"` // days, 0 = never
-}
-
-// CreateTokenResponse returns the plaintext token once and token metadata.
-type CreateTokenResponse struct {
-	Token string          `json:"token"` // plaintext — shown ONCE, never stored
-	Info  models.APIToken `json:"info"`
-}
-
-func (s *Server) handleCreateToken(w http.ResponseWriter, r *http.Request) {
-	var req CreateTokenRequest
-	if err := decodeJSON(r, &req); err != nil {
-		writeApiError(w, r, errValidationInvalidBody)
-		return
-	}
-
-	if req.Name == "" {
-		writeApiError(w, r, errValidationFieldRequired.WithMessage("name is required"))
-		return
-	}
-	if len(req.Name) > 100 {
-		writeApiError(w, r, errValidationFieldInvalid.WithMessage("name must be 100 chars or less"))
-		return
-	}
-
-	// Generate 32 random hex bytes → "aegis_<hex>"
-	rawBytes := make([]byte, 16)
-	if _, err := rand.Read(rawBytes); err != nil {
-		writeApiError(w, r, errServerInternal)
-		return
-	}
-	plaintext := "aegis_" + hex.EncodeToString(rawBytes)
-
-	// bcrypt hash (cost 12)
-	hash, err := bcrypt.GenerateFromPassword([]byte(plaintext), 12)
-	if err != nil {
-		writeApiError(w, r, errServerInternal)
-		return
-	}
-
-	// Extract prefix for lookup (first 14 chars: "aegis_" + 8 hex)
-	prefix := plaintext[:14]
-
-	user := middleware.UserFromContext(r.Context())
-
-	now := time.Now().UTC()
-	token := &models.APIToken{
-		ID:        uuid.New().String(),
-		ProjectID: req.ProjectID,
-		Name:      req.Name,
-		Prefix:    prefix,
-		CreatedBy: user.ID,
-		CreatedAt: now,
-	}
-
-	if req.ExpiresIn > 0 {
-		exp := now.Add(time.Duration(req.ExpiresIn) * 24 * time.Hour)
-		token.ExpiresAt = &exp
-	}
-
-	ts := tenantStore(r)
-	if err := ts.CreateAPIToken(r.Context(), token, string(hash)); err != nil {
-		writeApiError(w, r, errServerInternal)
-		return
-	}
-
-	writeResult(w, r, http.StatusCreated, CreateTokenResponse{
-		Token: plaintext,
-		Info:  *token,
-	})
-}
-
-func (s *Server) handleListTokens(w http.ResponseWriter, r *http.Request) {
-	ts := tenantStore(r)
-	tokens, err := ts.ListAPITokens(r.Context())
-	if err != nil {
-		writeApiError(w, r, errServerInternal)
-		return
-	}
-	if tokens == nil {
-		tokens = []models.APIToken{}
-	}
-	writeResult(w, r, http.StatusOK, tokens)
-}
-
-func (s *Server) handleRevokeToken(w http.ResponseWriter, r *http.Request) {
-	id := pathParam(r, "id")
-	ts := tenantStore(r)
-	if err := ts.RevokeAPIToken(r.Context(), id); err != nil {
-		writeApiError(w, r, errServerInternal)
-		return
-	}
-	w.WriteHeader(http.StatusNoContent)
-}
-
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
 func findingFilterFromQuery(r *http.Request, projectID string) findingFilter {
@@ -461,3 +356,4 @@ func findingFilterFromQuery(r *http.Request, projectID string) findingFilter {
 
 // findingFilter is a local type to construct store.FindingFilter.
 type findingFilter = store.FindingFilter
+

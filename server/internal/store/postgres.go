@@ -603,3 +603,112 @@ func (p *Postgres) UpdateTokenLastUsed(ctx context.Context, id string) error {
 	return err
 }
 
+// ─── Org Feature Flags ──────────────────────────────────────────────────────
+
+func (p *Postgres) IsOrgFeatureActive(ctx context.Context, name string) bool {
+	q := fmt.Sprintf(`SELECT provisioned AND enabled FROM %s WHERE name = $1`, p.t("org_feature_flags"))
+	var active bool
+	err := p.db.QueryRowContext(ctx, q, name).Scan(&active)
+	if err != nil {
+		return false // default to disabled on error or not found
+	}
+	return active
+}
+
+func (p *Postgres) ListOrgFeatureFlags(ctx context.Context) ([]OrgFeatureFlag, error) {
+	q := fmt.Sprintf(`SELECT name, provisioned, enabled, description FROM %s ORDER BY name`, p.t("org_feature_flags"))
+	rows, err := p.db.QueryContext(ctx, q)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var flags []OrgFeatureFlag
+	for rows.Next() {
+		var f OrgFeatureFlag
+		if err := rows.Scan(&f.Name, &f.Provisioned, &f.Enabled, &f.Description); err != nil {
+			return nil, err
+		}
+		flags = append(flags, f)
+	}
+	return flags, rows.Err()
+}
+
+func (p *Postgres) SetOrgFeatureEnabled(ctx context.Context, name string, enabled bool) error {
+	// Only allow toggling flags that exist and are provisioned
+	q := fmt.Sprintf(`UPDATE %s SET enabled = $1, updated_at = NOW()
+		WHERE name = $2 AND provisioned = TRUE`, p.t("org_feature_flags"))
+	result, err := p.db.ExecContext(ctx, q, enabled, name)
+	if err != nil {
+		return err
+	}
+	affected, _ := result.RowsAffected()
+	if affected == 0 {
+		return fmt.Errorf("feature flag %q not found or not provisioned", name)
+	}
+	return nil
+}
+
+func (p *Postgres) ListAPITokensByProject(ctx context.Context, projectID string) ([]models.APIToken, error) {
+	q := fmt.Sprintf(`SELECT
+		id, COALESCE(project_id::text, ''), name, prefix,
+		COALESCE(created_by::text, ''), last_used, expires_at, revoked, created_at
+	FROM %s WHERE project_id = $1::uuid ORDER BY created_at DESC`, p.t("api_tokens"))
+
+	rows, err := p.db.QueryContext(ctx, q, projectID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var tokens []models.APIToken
+	for rows.Next() {
+		var (
+			t                    models.APIToken
+			lastUsed, expiresAt sql.NullTime
+		)
+		if err := rows.Scan(
+			&t.ID, &t.ProjectID, &t.Name, &t.Prefix,
+			&t.CreatedBy, &lastUsed, &expiresAt, &t.Revoked, &t.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		if lastUsed.Valid {
+			t.LastUsed = &lastUsed.Time
+		}
+		if expiresAt.Valid {
+			t.ExpiresAt = &expiresAt.Time
+		}
+		tokens = append(tokens, t)
+	}
+	return tokens, rows.Err()
+}
+
+func (p *Postgres) GetAPIToken(ctx context.Context, id string) (*models.APIToken, error) {
+	q := fmt.Sprintf(`SELECT
+		id, COALESCE(project_id::text, ''), name, prefix,
+		COALESCE(created_by::text, ''), last_used, expires_at, revoked, created_at
+	FROM %s WHERE id = $1`, p.t("api_tokens"))
+
+	var (
+		t                    models.APIToken
+		lastUsed, expiresAt sql.NullTime
+	)
+	err := p.db.QueryRowContext(ctx, q, id).Scan(
+		&t.ID, &t.ProjectID, &t.Name, &t.Prefix,
+		&t.CreatedBy, &lastUsed, &expiresAt, &t.Revoked, &t.CreatedAt,
+	)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if lastUsed.Valid {
+		t.LastUsed = &lastUsed.Time
+	}
+	if expiresAt.Valid {
+		t.ExpiresAt = &expiresAt.Time
+	}
+	return &t, nil
+}

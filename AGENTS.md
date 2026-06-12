@@ -104,7 +104,7 @@ if !s.common.IsFeatureEnabled(ctx, "mfa") || !tenantStore.IsOrgFeatureEnabled(ct
 
 **Current global flags:** `signup`, `invite_only`, `scan_docker_mode`, `public_api`.
 
-**Example org-level flags:** `require_mfa`, `ip_restrictions`, `email_domain_restriction`, `auto_join`, `api_access`, `scan_docker_mode`, `advanced_reports`, `webhooks`, `sso`, `custom_domain`.
+**Example org-level flags:** `org_wide_tokens`, `require_mfa`, `ip_restrictions`, `email_domain_restriction`, `auto_join`, `api_access`, `scan_docker_mode`, `advanced_reports`, `webhooks`, `sso`, `custom_domain`.
 
 **Rules:**
 1. **All user-visible features that can be toggled MUST use org-level feature flags.** Do not use hardcoded booleans, environment variables, or config files for feature toggling. If a feature should be controllable per-org, it goes in `org_feature_flags`. If it's a platform-wide concern, it goes in `common.feature_flags`.
@@ -260,7 +260,7 @@ Error codes are defined in `errors.yaml` (project root) and generated as Go cons
 | `tenant_error` | E30001–E30005 | `not_found`, `not_member`, `slug_taken` |
 | `resource_error` | E40001–E40003 | `not_found`, `conflict`, `already_exists` |
 | `validation_error` | E50001–E50004 | `invalid_request`, `field_required`, `field_invalid` |
-| `permission_error` | E60001–E60003 | `denied`, `feature_disabled`, `mfa_required_by_org` |
+| `permission_error` | E60001–E60004 | `denied`, `feature_disabled`, `mfa_required_by_org`, `feature_not_provisioned` |
 | `rate_limit_error` | E70001 | `exceeded` |
 | `server_error` | E90001–E90002 | `internal`, `unavailable` |
 

@@ -10,8 +10,7 @@ import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Copy, Check, AlertTriangle, Key } from "lucide-react"
-import { tokensApi, projectsApi } from "@/lib/api"
-import type { Project } from "@/lib/types"
+import { orgTokensApi } from "@/lib/api"
 
 interface CreateTokenDialogProps {
   open: boolean
@@ -22,9 +21,7 @@ interface CreateTokenDialogProps {
 export function CreateTokenDialog({ open, onOpenChange, onCreated }: CreateTokenDialogProps) {
   const [step, setStep] = useState<"form" | "result">("form")
   const [name, setName] = useState("")
-  const [projectId, setProjectId] = useState("")
   const [expiresIn, setExpiresIn] = useState(90)
-  const [projects, setProjects] = useState<Project[]>([])
   const [creating, setCreating] = useState(false)
   const [error, setError] = useState("")
   const [plaintext, setPlaintext] = useState("")
@@ -33,12 +30,10 @@ export function CreateTokenDialog({ open, onOpenChange, onCreated }: CreateToken
   const resetAndOpen = () => {
     setStep("form")
     setName("")
-    setProjectId("")
     setExpiresIn(90)
     setError("")
     setPlaintext("")
     setCopied(false)
-    projectsApi.list().then(setProjects).catch(() => setProjects([]))
   }
 
   // Reset form state whenever the dialog opens
@@ -54,9 +49,8 @@ export function CreateTokenDialog({ open, onOpenChange, onCreated }: CreateToken
     setCreating(true)
     setError("")
     try {
-      const result = await tokensApi.create({
+      const result = await orgTokensApi.create({
         name: name.trim(),
-        project_id: projectId || undefined,
         expires_in: expiresIn || undefined,
       })
       setPlaintext(result.token)
@@ -86,7 +80,7 @@ export function CreateTokenDialog({ open, onOpenChange, onCreated }: CreateToken
                 Create API Token
               </DialogTitle>
               <DialogDescription>
-                Generate a token for agent authentication. Tokens use Bearer auth and are scoped to this organization.
+                Generate an org-wide token for agent authentication. Tokens use Bearer auth and are scoped to this organization.
               </DialogDescription>
             </DialogHeader>
 
@@ -100,26 +94,6 @@ export function CreateTokenDialog({ open, onOpenChange, onCreated }: CreateToken
                   id="token-name-input"
                   autoFocus
                 />
-              </div>
-
-              <div>
-                <label className="text-sm font-medium block mb-1.5">
-                  Project Scope <span className="text-muted-foreground font-normal">(optional)</span>
-                </label>
-                <select
-                  className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-xs transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-                  value={projectId}
-                  onChange={(e) => setProjectId(e.target.value)}
-                  id="token-project-select"
-                >
-                  <option value="">Org-wide (all projects)</option>
-                  {projects.map((p) => (
-                    <option key={p.id} value={p.id}>{p.name}</option>
-                  ))}
-                </select>
-                <p className="text-xs text-muted-foreground mt-1.5">
-                  Scope this token to a specific project, or leave empty for org-wide access.
-                </p>
               </div>
 
               <div>

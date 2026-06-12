@@ -6,7 +6,7 @@ This document tracks planned features, improvements, and technical debt for the 
 
 ---
 
-## Phase 1 — Core UI Completeness
+## Phase 1 — Core UI Completeness ✅
 
 High-priority items to make the existing platform fully functional end-to-end.
 
@@ -49,106 +49,184 @@ High-priority items to make the existing platform fully functional end-to-end.
 
 ---
 
-## Phase 2 — Reports & Analytics
+## Phase 2 — Agent Integration
 
-Fill in the sidebar sections that exist as navigation items but have no implementation.
+Port the Aegis scanning agent into the monorepo and connect it to the platform. This is the core value proposition — without the scanning engine, the platform is a dashboard with no data source.
 
-### Reports Page
-- **Status:** Not started
-- **Priority:** 🟡 Medium
-- **Description:** `/reports` route is in the sidebar nav but has no page.
-- **Requirements:**
-  - Generate PDF/HTML security reports for a scan
-  - Executive summary with severity charts
-  - Detailed findings list with remediation guidance
-  - Export to PDF
-
-### Analytics Page
-- **Status:** Not started
-- **Priority:** 🟡 Medium
-- **Description:** `/analytics` route is in the sidebar nav but has no page.
-- **Requirements:**
-  - Trends over time (findings opened vs closed)
-  - Severity distribution charts
-  - Mean time to remediation
-  - Per-scan comparison view
-  - Needs new API endpoints for time-series data
-
----
-
-## Phase 3 — Project Integration
-
-### Link Scans to Projects
-- **Status:** Not started
-- **Priority:** 🟡 Medium
-- **Description:** Projects exist as an entity but scans have no `project_id` association.
-- **Changes needed:**
-  - Add `project_id` column to `scans` table (migration)
-  - Update `Scan` model, store, and API handlers
-  - Filter scans by project in the UI
-  - Project detail page showing its scans and aggregate findings
-
-### Project Settings
-- **Status:** Not started
-- **Priority:** 🟢 Low
-- **Description:** Per-project configuration (default persona, auto-scan schedule, notification preferences).
-
----
-
-## Phase 4 — Org-Level Feature Flags & Versioning
-
-Introduce per-org feature control and org versioning to allow independent feature rollouts and graduated upgrades across tenants.
-
-### Org-Level Feature Flags
+### Scanning Agent
 - **Status:** Not started
 - **Priority:** 🔴 Critical
-- **Description:** Create a per-org feature flag table (`org_xxx.org_feature_flags`) separate from the global `common.feature_flags`. This allows org admins to toggle features per-org and enables platform operators to grant/deny specific features to individual orgs.
-- **Design:**
-  - **Two-tier system:** Global flags in `common.feature_flags` act as a kill-switch. Org flags in `org_xxx.org_feature_flags` provide per-org overrides. A feature is enabled only if **both** the global flag AND the org flag are enabled (logical AND).
-  - **Schema:** `org_xxx.org_feature_flags` table with columns: `name TEXT PK`, `enabled BOOLEAN`, `description TEXT`, `updated_at TIMESTAMPTZ`, `updated_by UUID` (tracks who changed it).
-  - **Default seeding:** On org provisioning, seed default org flags based on the org's plan (e.g., free orgs get fewer flags enabled).
-  - **API:** CRUD endpoints at `GET/PUT /api/v1/org-features` (protected, admin+ role).
-  - **UI:** Settings page tab for org admins to view and toggle org-level features.
-- **Example org-level flags:**
-  - `require_mfa` — Users must have MFA enabled to access the org
-  - `ip_restrictions` — Enable IP allowlist enforcement for the org
-  - `email_domain_restriction` — Only allow users from specific email domains to join
-  - `auto_join` — Auto-join users based on email domain match
-  - `api_access` — Allow API token creation for this org
-  - `scan_docker_mode` — Enable Docker sandbox mode for this org's scans
-  - `advanced_reports` — Enable advanced/PDF reporting features
-  - `webhooks` — Enable webhook integrations
-  - `sso` — Enable SSO/SAML login for the org
-  - `custom_domain` — Allow custom domain configuration
+- **Description:** Port the Aegis scanning agent from `local-harness/agents/aegis/` into `agent/` in the Aegis monorepo. The agent becomes a standalone Go binary and Docker image that scans codebases using AI-powered personas and pushes findings to the Aegis server via the existing agent ingest API.
+- **Architecture:**
+  - **Monorepo layout:** `agent/` directory with its own `go.mod` (separate Go module), `Dockerfile`, and binary
+  - **External dependency:** `github.com/pixelvide/localharness/adk` (public module) for the agent runtime
+  - **Binary name:** `aegis` (server binary is already `aegis-server`, no conflict)
+  - **Docker image:** `aegis-agent` (separate from `aegis-server`)
+  - **Docker Compose:** Agent is NOT included in docker-compose.yml. Users run the agent binary or Docker image manually.
+- **Agent → Server communication:**
+  - Agent generates a **ULID** (time-sortable, 26-char) as `scan_id` at the start of each run
+  - Every finding pushed includes this `scan_id` for correlation
+  - Server groups findings by `scan_id` for display on the Scans page
+  - Scan metadata (persona, agent version, target info) is inferred from findings
+  - No explicit scan lifecycle (no start/complete states) — the `scan_id` is a correlation ID only
+- **Dual output mode:**
+  - When `--server` is provided: push findings to Aegis server via `POST /api/v1/agent/findings`
+  - If the server is unreachable: fall back to local `findings.json` so findings can be pushed later
+  - Without `--server`: write findings locally only (offline mode, existing behavior)
+- **CLI interface:**
+  ```bash
+  # Push to server
+  aegis --server=https://acme.aegis.io --token=aegis_xxx sharingan
 
-### Org Versioning
-- **Status:** Not started
-- **Priority:** 🔴 Critical
-- **Description:** Track a `schema_version` per org so tenants can be on different schema versions. This allows rolling upgrades where org A stays on v1 while org B is upgraded to v2.
-- **Design:**
-  - Add `schema_version INTEGER DEFAULT 1` to `common.organizations`.
-  - Each org schema migration records which version it applies. The migration runner checks the org's current version and only applies migrations above that version.
-  - **Graduated rollout:** New migrations can target specific orgs or org plans first (e.g., upgrade `enterprise` orgs to v2 first, then `pro`, then `free`).
-  - **Rollback safety:** Each migration version is immutable once applied. Rollback requires a separate "down" migration at a higher version number.
-  - **Version-gated features:** Org-level feature flags can reference a minimum schema version. If an org hasn't been migrated to the required version, the flag is force-disabled regardless of its setting.
+  # With workspace
+  aegis --server=https://acme.aegis.io --token=aegis_xxx \
+    --workspace=/path/to/project sharingan
+
+  # Custom prompt
+  aegis --server=https://acme.aegis.io --token=aegis_xxx \
+    killua "Test the authentication flow in src/auth/"
+
+  # Offline mode (local findings.json only)
+  aegis sharingan
+
+  # Docker
+  docker run --rm \
+    -v /path/to/project:/workspace \
+    -e GEMINI_API_KEY=xxx \
+    aegis-agent \
+    --server=https://acme.aegis.io --token=aegis_xxx \
+    sharingan
+  ```
+- **Personas ported:**
+  - 👁️ **Sharingan** — Full security audit & reconnaissance
+  - 🧪 **Senku** — Supply chain & dependency analysis
+  - ⚡ **Killua** — Targeted penetration testing
+- **Subagents ported:**
+  - `exploit-writer` — Creates finding reports + working exploit PoC scripts
+  - `deep-tracer` — Read-only deep analysis of specific files/components
 - **Changes needed:**
-  - Add `schema_version` column to `common.organizations` (migration)
-  - Add `org_schema_migrations` table to each org schema to track per-org migration history
-  - Update `ProvisionOrgSchema()` to stamp the latest version
-  - Create a migration runner that operates per-org (not globally)
-  - Admin API to check org version and trigger upgrades
-  - **Feature-version coupling:** Org feature flags include an optional `min_version` field — the feature is auto-disabled if the org's schema version is below this threshold
+  - Copy agent code from `local-harness/agents/aegis/` → `agent/`
+  - Add `--server` and `--token` CLI flags
+  - Add `reporter.go` — HTTP reporting layer (push findings to server, fallback to local JSON)
+  - Add ULID generation for scan correlation
+  - Add `agent/Dockerfile` for standalone agent image
+  - Server: accept and store `scan_id` from agent findings
+  - UI: Scans page shows scan groups from agent pushes (grouped by `scan_id`, sorted newest first)
+  - UI: Agents page updated with setup/usage instructions (token + CLI command)
+  - Documentation: `docs/agent.md` with setup, usage, Docker, CI/CD examples
 
 ---
 
-## Phase 5 — Org Policies & Access Control
+## Phase 3 — Critical Security Fixes
 
-Enterprise-grade controls for managing who can access an org and how.
+Exploitable security gaps that must be fixed before onboarding users. A security platform without rate limiting and account lockout is not credible.
+
+### API Rate Limiting
+- **Status:** Not started
+- **Priority:** 🔴 Critical
+- **Description:** Rate limit auth endpoints (login, register, password reset, MFA) and agent ingest endpoints to prevent brute-force and abuse. Use Valkey for distributed counters.
+- **Requirements:**
+  - **Auth endpoints:** 5 attempts per minute per IP for login/register, 3 per hour for password reset
+  - **Agent endpoints:** Per-org token bucket (free: 100 req/min, pro: 1000, enterprise: 10000)
+  - **Global:** 1000 req/min per IP across all endpoints
+  - Valkey-backed sliding window counters
+  - `X-RateLimit-Limit`, `X-RateLimit-Remaining`, `X-RateLimit-Reset` response headers
+  - `429 Too Many Requests` with `Retry-After` header
+  - Rate limit middleware in the request chain (before auth, for auth endpoints)
+
+### Account Lockout
+- **Status:** Not started
+- **Priority:** 🔴 Critical
+- **Description:** Lock accounts after N consecutive failed login attempts to prevent brute-force password guessing. Currently there is no lockout — unlimited attempts are allowed.
+- **Requirements:**
+  - Track failed login attempts per account in Valkey: `login_failures:{user_id}` counter with TTL
+  - After 5 consecutive failures → lock account for 15 minutes
+  - After 10 consecutive failures → lock account for 1 hour
+  - After 20 consecutive failures → lock account until manual unlock or password reset
+  - Reset counter on successful login
+  - Send email notification to user when account is locked
+  - `common.account_lockouts` table: `user_id UUID PK`, `locked_until TIMESTAMPTZ`, `attempt_count INT`, `last_attempt_at TIMESTAMPTZ`
+  - Admin API to manually unlock accounts
+  - User-facing error: "Account temporarily locked. Try again in X minutes or reset your password."
+
+### MFA Brute-Force Protection
+- **Status:** Not started
+- **Priority:** 🔴 Critical
+- **Description:** OTP codes (6 digits) can currently be guessed endlessly with no attempt limit. An attacker with a valid MFA token can try all 1,000,000 combinations.
+- **Requirements:**
+  - Track MFA verification attempts per MFA token in Valkey: `mfa_attempts:{mfa_token}` counter with TTL matching MFA token expiry
+  - After 3 failed attempts → invalidate the MFA token entirely, force user to re-enter password
+  - After 5 failed attempts (across multiple MFA tokens) within 10 minutes → trigger account lockout
+  - Rate limit `POST /api/v1/auth/mfa/validate` to 1 request per 2 seconds per IP
+  - Rate limit `POST /api/v1/auth/mfa/send-email-otp` to 1 request per 30 seconds per MFA token
+  - Log all failed MFA attempts to audit log
+  - User-facing error: "Too many failed attempts. Please log in again."
+
+### `require_mfa` Enforcement Fix
+- **Status:** Not started (was incorrectly marked as completed)
+- **Priority:** 🔴 Critical
+- **Description:** The `require_mfa` org-level feature flag is documented as enforced in TenantResolver middleware, but the check does not exist. Also, the flag is not seeded in `ProvisionOrgSchema()`.
+- **Changes needed:**
+  - Add `require_mfa` check in TenantResolver middleware: if flag is enabled and user has `mfa_enabled = false`, return 403
+  - Seed `require_mfa` flag in `ProvisionOrgSchema()` (default: disabled)
+  - Add migration to seed `require_mfa` for existing orgs
+  - Return structured error: `errPermissionMFARequiredByOrg` (E60003)
+
+### Token Refresh Rotation
+- **Status:** Not started
+- **Priority:** 🔴 Critical
+- **Description:** Replace the current single long-lived JWT with a short-lived access token + long-lived refresh token pair. Refresh tokens are rotated on each use (one-time use), preventing replay attacks if a token is stolen.
+- **Requirements:**
+  - Short-lived access token (15 min) + refresh token (7 days) pair
+  - `common.refresh_tokens` table: `id UUID PK`, `user_id UUID`, `token_hash TEXT`, `family TEXT` (rotation chain), `expires_at TIMESTAMPTZ`, `revoked_at TIMESTAMPTZ`
+  - `POST /api/v1/auth/refresh` endpoint: validate refresh token, issue new access+refresh pair, revoke old refresh token
+  - **Rotation detection:** If a revoked refresh token is reused, revoke the entire token family (all descendants) — this indicates theft
+  - Update frontend `request()` helper to auto-refresh on 401
+  - Graceful migration: existing sessions continue to work until expiry
+
+### Email Verification Enforcement
+- **Status:** Not started
+- **Priority:** 🟡 Medium
+- **Description:** Users can currently use the platform with unverified email addresses. No handler or middleware gates access based on email verification status.
+- **Requirements:**
+  - Add email verification check in TenantResolver or Auth middleware
+  - If user's primary email is unverified, return 403 with redirect to verification page
+  - Grace period: allow access for 24 hours after registration before enforcing
+  - Resend verification email endpoint (already exists)
+
+### Error Boundaries (React)
+- **Status:** Not started
+- **Priority:** 🟡 Medium
+- **Description:** No React error boundaries exist — unhandled errors crash the entire app with a white screen.
+- **Requirements:**
+  - Add top-level `ErrorBoundary` component wrapping the app
+  - Add per-page error boundaries for graceful degradation
+  - Show user-friendly error message with "Reload" button
+  - Log errors to console (and later to server-side error tracking)
+
+### CSRF Token Protection
+- **Status:** Not started
+- **Priority:** 🟡 Medium
+- **Description:** Currently relying solely on `SameSite=Lax` cookies for CSRF protection. While `SameSite=Lax` prevents most CSRF attacks, it does not protect against top-level navigation attacks (GET-based state changes) and some browser edge cases.
+- **Requirements:**
+  - Generate a CSRF token on login and store in session (Valkey or DB)
+  - Return token via a `GET /api/v1/auth/csrf` endpoint or as a response header
+  - Frontend stores token in memory (not localStorage) and sends it as `X-CSRF-Token` header on all mutating requests (POST/PATCH/DELETE)
+  - Server middleware validates `X-CSRF-Token` matches session token on all mutating requests
+  - Exempt agent API (Bearer token auth) from CSRF checks — CSRF only applies to cookie-based auth
+  - Token rotation: regenerate on sensitive actions (password change, MFA toggle)
+  - Double-submit cookie pattern as fallback for non-SPA clients
+
+---
+
+## Phase 4 — RBAC Enforcement
+
+Roles exist in the data model (`owner`, `admin`, `member`, `viewer`) and the middleware resolves them into context, but no handler checks the role. A `viewer` can currently delete findings, revoke tokens, and remove members.
 
 ### Two-Level Role-Based Access Control (RBAC)
 - **Status:** Not started
 - **Priority:** 🔴 Critical
-- **Description:** Implement a two-tier RBAC system with **org-level roles** (controlling org-wide access) and **project-level roles** (controlling per-project access). Roles exist in the data model (`owner`, `admin`, `member`, `viewer`) but are not enforced in any handler today. This design is inspired by Langfuse's RBAC model, adapted for Aegis's security scanning domain.
+- **Description:** Implement a two-tier RBAC system with **org-level roles** (controlling org-wide access) and **project-level roles** (controlling per-project access). Inspired by Langfuse's RBAC model, adapted for Aegis's security scanning domain.
 
 #### Design Overview
 
@@ -251,22 +329,61 @@ CREATE TABLE project_members (
 - `PATCH /api/v1/projects/{slug}/members/{userId}` — change project role (new)
 - `DELETE /api/v1/projects/{slug}/members/{userId}` — remove project member (new)
 
-### MFA Enforcement
-- **Status:** ✅ Completed (2026-06-11)
-- **Priority:** 🟡 Medium
-- **Description:** Multi-device MFA with explicit user toggle. Users can add TOTP authenticator apps and email OTP as second factors. MFA is controlled via `mfa_enabled` on `common.users` as a manual toggle.
-- **Implemented:**
-  - Multi-device MFA: TOTP (Google Authenticator, Authy, etc.) and email OTP
-  - Device management: add, verify, remove (password required)
-  - MFA enable/disable is an explicit user action (not auto-computed)
-  - Enable prerequisite: at least one verified TOTP device OR verified email
-  - 8 bcrypt-hashed recovery codes (one-time use, regeneratable)
-  - Multi-method login challenge: device selector, email OTP sending
-  - Org-level `require_mfa` flag: if enabled, `TenantResolver` middleware blocks access with 403 if user has MFA disabled
-  - Profile page with 3 tabs: Emails, Authentication, Active Sessions
-  - Session tracking via JTI in JWT — list, revoke, revoke all
-- **Future:**
-  - Hardware keys (FIDO2/WebAuthn — YubiKey, passkeys)
+---
+
+## Phase 5 — Org Versioning & Feature Flag Completion
+
+Infrastructure for per-org schema migrations and completing the feature flag system.
+
+### Org Versioning
+- **Status:** Not started
+- **Priority:** 🔴 Critical
+- **Description:** Track a `schema_version` per org so tenants can be on different schema versions. This allows rolling upgrades where org A stays on v1 while org B is upgraded to v2.
+- **Design:**
+  - Add `schema_version INTEGER DEFAULT 1` to `common.organizations`.
+  - Each org schema migration records which version it applies. The migration runner checks the org's current version and only applies migrations above that version.
+  - **Graduated rollout:** New migrations can target specific orgs or org plans first (e.g., upgrade `enterprise` orgs to v2 first, then `pro`, then `free`).
+  - **Rollback safety:** Each migration version is immutable once applied. Rollback requires a separate "down" migration at a higher version number.
+  - **Version-gated features:** Org-level feature flags can reference a minimum schema version. If an org hasn't been migrated to the required version, the flag is force-disabled regardless of its setting.
+- **Changes needed:**
+  - Add `schema_version` column to `common.organizations` (migration)
+  - Add `org_schema_migrations` table to each org schema to track per-org migration history
+  - Update `ProvisionOrgSchema()` to stamp the latest version
+  - Create a migration runner that operates per-org (not globally)
+  - Admin API to check org version and trigger upgrades
+  - **Feature-version coupling:** Org feature flags include an optional `min_version` field — the feature is auto-disabled if the org's schema version is below this threshold
+
+### Org Feature Flag Completion
+- **Status:** Partially implemented
+- **Priority:** 🔴 Critical
+- **Description:** The `org_feature_flags` table, store methods, and API endpoint exist, but only `org_wide_tokens` is seeded. Need to seed all planned flags, enforce `org_wide_tokens` in token creation, and build the settings UI.
+- **What exists:**
+  - `org_xxx.org_feature_flags` table (provisioned in `ProvisionOrgSchema`)
+  - Store interface: `IsOrgFeatureActive()`, `ListOrgFeatureFlags()`, `SetOrgFeatureEnabled()`
+  - API: `GET/PUT /api/v1/org-features`
+- **What's missing:**
+  - Seed additional flags: `require_mfa`, `api_access`, `scan_docker_mode`, `advanced_reports`, `webhooks`, `sso`, `custom_domain`, `ip_restrictions`, `email_domain_restriction`, `auto_join`
+  - Enforce `org_wide_tokens` flag in token creation handler
+  - UI: Settings page tab for org admins to view and toggle org-level features
+  - RBAC check on feature flag toggle endpoint (admin+ only, depends on Phase 4)
+
+---
+
+## Phase 6 — Audit Logging & Org Policies
+
+Audit logging is a cross-cutting concern that gets exponentially harder to retrofit. Every handler added without audit hooks is a handler that needs to be instrumented later.
+
+### Audit Log
+- **Status:** Not started
+- **Priority:** 🔴 Critical
+- **Description:** Log security-relevant actions (member invite/remove, scan create/delete, finding triage changes, feature flag changes, IP allowlist changes, login/logout, password changes, MFA changes) for compliance. Essential for a security platform.
+- **Changes needed:**
+  - `audit_log` table in per-org schema: `id UUID`, `actor_id UUID`, `action TEXT`, `resource_type TEXT`, `resource_id UUID`, `metadata JSONB`, `ip_address TEXT`, `user_agent TEXT`, `created_at TIMESTAMPTZ`
+  - `common.auth_audit_log` table for auth events (login, logout, password changes, MFA changes) — not org-scoped
+  - Store interface + postgres implementation
+  - Write audit entries from handlers (non-blocking via goroutines)
+  - UI page to browse and filter audit log (by actor, action, date range)
+  - Export to CSV/JSON for compliance reports
 
 ### IP Restriction
 - **Status:** Not started
@@ -290,28 +407,6 @@ CREATE TABLE project_members (
   - API endpoints: `GET/POST/DELETE /api/v1/email-domains` (admin+ role)
   - UI: Settings page tab for managing allowed email domains
 
-### Auto-Join by Email Domain
-- **Status:** Not started
-- **Priority:** 🟢 Low
-- **Description:** Automatically add users to an org if their email domain matches a configured domain. Controlled via the `auto_join` org-level feature flag.
-- **Requirements:**
-  - `org_xxx.auto_join_domains` table: `domain TEXT PK`, `default_role TEXT DEFAULT 'member'`, `created_at TIMESTAMPTZ`
-  - On user registration or first login, check if any org has an auto-join domain matching the user's email — if so, auto-add as member with the configured default role
-  - API endpoints: `GET/POST/DELETE /api/v1/auto-join-domains` (owner role only)
-  - UI: Settings page tab for configuring auto-join domains and default role
-
-### Audit Log
-- **Status:** Not started
-- **Priority:** 🔴 Critical
-- **Description:** Log security-relevant actions (member invite/remove, scan create/delete, finding triage changes, feature flag changes, IP allowlist changes, login/logout, password changes, MFA changes) for compliance. Essential for a security platform.
-- **Changes needed:**
-  - `audit_log` table in per-org schema: `id UUID`, `actor_id UUID`, `action TEXT`, `resource_type TEXT`, `resource_id UUID`, `metadata JSONB`, `ip_address TEXT`, `user_agent TEXT`, `created_at TIMESTAMPTZ`
-  - `common.auth_audit_log` table for auth events (login, logout, password changes, MFA changes) — not org-scoped
-  - Store interface + postgres implementation
-  - Write audit entries from handlers (non-blocking via goroutines)
-  - UI page to browse and filter audit log (by actor, action, date range)
-  - Export to CSV/JSON for compliance reports
-
 ### Session Management
 - **Status:** ✅ Completed (2026-06-11)
 - **Priority:** 🟢 Low
@@ -325,7 +420,62 @@ CREATE TABLE project_members (
 
 ---
 
-## Phase 6 — Integrations
+## Phase 7 — Reports & Analytics
+
+Fill in the sidebar sections that exist as navigation items but have no implementation.
+
+### Reports Page
+- **Status:** Not started
+- **Priority:** 🟡 Medium
+- **Description:** `/reports` route is in the sidebar nav but has no page.
+- **Requirements:**
+  - Generate PDF/HTML security reports for a scan
+  - Executive summary with severity charts
+  - Detailed findings list with remediation guidance
+  - Export to PDF
+
+### Analytics Page
+- **Status:** Not started
+- **Priority:** 🟡 Medium
+- **Description:** `/analytics` route is in the sidebar nav but has no page.
+- **Requirements:**
+  - Trends over time (findings opened vs closed)
+  - Severity distribution charts
+  - Mean time to remediation
+  - Per-scan comparison view
+  - Needs new API endpoints for time-series data
+
+### Store-Level Pagination
+- **Status:** Not started
+- **Priority:** 🟡 Medium
+- **Description:** The pagination envelope infrastructure is ready (`ResultInfo`, `parseResultInfo`, `writeList`), but no SQL query actually paginates. All list endpoints return ALL rows.
+- **Requirements:**
+  - Add `LIMIT/OFFSET` and `COUNT(*) OVER()` to paginated SQL queries
+  - Update `ListFindings`, `ListScans`, `ListProjects`, `ListAPITokens`
+  - Use `writeList` with populated `ResultInfo` for all list endpoints
+  - Frontend: pagination controls on findings, scans, and projects pages
+
+---
+
+## Phase 8 — Project Integration
+
+### Link Scans to Projects
+- **Status:** Partially implemented
+- **Priority:** 🟡 Medium
+- **Description:** Projects exist as an entity and the `scans` table already has a `project_id` column. What's missing is the API support for filtering scans by project and the project detail page.
+- **Changes needed:**
+  - Update scan list API to filter by project
+  - Project detail page showing its scans and aggregate findings
+  - Agent: pass project context when pushing findings
+
+### Project Settings
+- **Status:** Not started
+- **Priority:** 🟢 Low
+- **Description:** Per-project configuration (default persona, auto-scan schedule, notification preferences).
+
+---
+
+## Phase 9 — Integrations
 
 ### CI/CD Integration Guide
 - **Status:** Not started
@@ -346,16 +496,27 @@ CREATE TABLE project_members (
   - HMAC-signed POST to webhook URL
   - Retry with exponential backoff
 
-### SSO / SAML Integration
+### Member Invitation Flow
 - **Status:** Not started
-- **Priority:** 🟢 Low
-- **Description:** Allow enterprise orgs to configure SAML-based SSO. Controlled via the `sso` org-level feature flag.
+- **Priority:** 🟡 Medium
+- **Description:** Currently members can only be added if they already have an account. Need an invite-by-email flow where non-registered users receive an email invitation to join an org.
 - **Requirements:**
-  - SAML 2.0 SP implementation
-  - `org_xxx.sso_config` table (entity_id, sso_url, certificate, etc.)
-  - Login flow: redirect to IdP → callback → create/link user → set session
-  - Support for Okta, Azure AD, Google Workspace, OneLogin
-  - Auto-provisioning of users from IdP attributes
+  - `common.org_invitations` table: `id UUID PK`, `org_id UUID`, `email TEXT`, `role TEXT`, `invited_by UUID`, `token_hash TEXT`, `expires_at TIMESTAMPTZ`, `accepted_at TIMESTAMPTZ`
+  - `POST /api/v1/members/invite` — send invitation email (admin+ role)
+  - `POST /api/v1/auth/accept-invite` — accept invitation (creates account if needed, adds to org)
+  - Invitation email with accept link
+  - UI: invite dialog in Settings → Members tab
+
+### Split OpenAPI Specs
+- **Status:** Not started
+- **Priority:** 🟡 Medium
+- **Description:** Currently a single OpenAPI spec is served on all domains. Split into two specs served contextually.
+- **Requirements:**
+  - `openapi-base.yaml` — auth, registration, password reset, MFA, user management endpoints
+  - `openapi-org.yaml` — findings, scans, projects, tokens, members, dashboard, agent ingest endpoints
+  - Base domain (`aegis.io/api/v1/docs`) → serves `openapi-base.yaml`
+  - Org subdomain (`acme.aegis.io/api/v1/docs`) → serves `openapi-org.yaml`
+  - Swagger UI dynamically loads the correct spec based on domain
 
 ### Slack / Teams Notifications
 - **Status:** Not started
@@ -367,23 +528,20 @@ CREATE TABLE project_members (
   - Teams incoming webhook integration
   - Configurable event filters (severity threshold, scan status changes)
 
+### SSO / SAML Integration
+- **Status:** Not started
+- **Priority:** 🟢 Low
+- **Description:** Allow enterprise orgs to configure SAML-based SSO. Controlled via the `sso` org-level feature flag.
+- **Requirements:**
+  - SAML 2.0 SP implementation
+  - `org_xxx.sso_config` table (entity_id, sso_url, certificate, etc.)
+  - Login flow: redirect to IdP → callback → create/link user → set session
+  - Support for Okta, Azure AD, Google Workspace, OneLogin
+  - Auto-provisioning of users from IdP attributes
+
 ---
 
-## Phase 6.5 — Advanced Security
-
-Hardening features for session integrity, threat detection, and token lifecycle.
-
-### Token Refresh Rotation
-- **Status:** Not started
-- **Priority:** 🟡 Medium
-- **Description:** Replace the current single long-lived JWT with a short-lived access token + long-lived refresh token pair. Refresh tokens are rotated on each use (one-time use), preventing replay attacks if a token is stolen.
-- **Requirements:**
-  - Short-lived access token (15 min) + refresh token (7 days) pair
-  - `common.refresh_tokens` table: `id UUID PK`, `user_id UUID`, `token_hash TEXT`, `family TEXT` (rotation chain), `expires_at TIMESTAMPTZ`, `revoked_at TIMESTAMPTZ`
-  - `POST /api/v1/auth/refresh` endpoint: validate refresh token, issue new access+refresh pair, revoke old refresh token
-  - **Rotation detection:** If a revoked refresh token is reused, revoke the entire token family (all descendants) — this indicates theft
-  - Update frontend `request()` helper to auto-refresh on 401
-  - Graceful migration: existing sessions continue to work until expiry
+## Phase 10 — Advanced Security Hardening
 
 ### Suspicious Activity Detection
 - **Status:** Not started
@@ -420,19 +578,6 @@ Hardening features for session integrity, threat detection, and token lifecycle.
   - **Soft mode** (default): mismatch → log a security event + send email alert, but allow the request
   - Handle legitimate IP changes (mobile networks, VPNs) gracefully — soft mode is the safe default
 
-### API Rate Limiting
-- **Status:** Not started
-- **Priority:** 🔴 Critical
-- **Description:** Rate limit auth endpoints (login, register, password reset, MFA) and agent ingest endpoints to prevent brute-force and abuse. Use Valkey for distributed counters.
-- **Requirements:**
-  - **Auth endpoints:** 5 attempts per minute per IP for login/register, 3 per hour for password reset
-  - **Agent endpoints:** Per-org token bucket (free: 100 req/min, pro: 1000, enterprise: 10000)
-  - **Global:** 1000 req/min per IP across all endpoints
-  - Valkey-backed sliding window counters
-  - `X-RateLimit-Limit`, `X-RateLimit-Remaining`, `X-RateLimit-Reset` response headers
-  - `429 Too Many Requests` with `Retry-After` header
-  - Rate limit middleware in the request chain (before auth, for auth endpoints)
-
 ### Content Security Policy
 - **Status:** Not started
 - **Priority:** 🟡 Medium
@@ -456,7 +601,7 @@ Hardening features for session integrity, threat detection, and token lifecycle.
   - Rename cookie from `aegis_token` to `__Secure-aegis_token` (browser enforces Secure + no Domain override)
   - Note: `__Host-` prefix cannot be used because it disallows `Domain` attribute, which is required for cross-subdomain cookie sharing
   - Consider making Secure flag configurable via env var for dev vs prod
-  - Add CSRF token protection for all mutating cookie-authenticated endpoints (see CSRF Token Protection item)
+  - Add CSRF token protection for all mutating cookie-authenticated endpoints (see Phase 3 CSRF item)
 
 ### Password History
 - **Status:** Not started
@@ -469,50 +614,19 @@ Hardening features for session integrity, threat detection, and token lifecycle.
   - Automatically prune history entries beyond the configured depth
   - User-facing error: "You cannot reuse any of your last 5 passwords."
 
-### Account Lockout
+### Auto-Join by Email Domain
 - **Status:** Not started
-- **Priority:** 🔴 Critical
-- **Description:** Lock accounts after N consecutive failed login attempts to prevent brute-force password guessing. Currently there is no lockout — unlimited attempts are allowed.
+- **Priority:** 🟢 Low
+- **Description:** Automatically add users to an org if their email domain matches a configured domain. Controlled via the `auto_join` org-level feature flag.
 - **Requirements:**
-  - Track failed login attempts per account in Valkey: `login_failures:{user_id}` counter with TTL
-  - After 5 consecutive failures → lock account for 15 minutes
-  - After 10 consecutive failures → lock account for 1 hour
-  - After 20 consecutive failures → lock account until manual unlock or password reset
-  - Reset counter on successful login
-  - Send email notification to user when account is locked
-  - `common.account_lockouts` table: `user_id UUID PK`, `locked_until TIMESTAMPTZ`, `attempt_count INT`, `last_attempt_at TIMESTAMPTZ`
-  - Admin API to manually unlock accounts
-  - User-facing error: "Account temporarily locked. Try again in X minutes or reset your password."
-
-### MFA Brute-Force Protection
-- **Status:** Not started
-- **Priority:** 🔴 Critical
-- **Description:** OTP codes (6 digits) can currently be guessed endlessly with no attempt limit. An attacker with a valid MFA token can try all 1,000,000 combinations.
-- **Requirements:**
-  - Track MFA verification attempts per MFA token in Valkey: `mfa_attempts:{mfa_token}` counter with TTL matching MFA token expiry
-  - After 3 failed attempts → invalidate the MFA token entirely, force user to re-enter password
-  - After 5 failed attempts (across multiple MFA tokens) within 10 minutes → trigger account lockout
-  - Rate limit `POST /api/v1/auth/mfa/validate` to 1 request per 2 seconds per IP
-  - Rate limit `POST /api/v1/auth/mfa/send-email-otp` to 1 request per 30 seconds per MFA token
-  - Log all failed MFA attempts to audit log
-  - User-facing error: "Too many failed attempts. Please log in again."
-
-### CSRF Token Protection
-- **Status:** Not started
-- **Priority:** 🟡 Medium
-- **Description:** Currently relying solely on `SameSite=Lax` cookies for CSRF protection. While `SameSite=Lax` prevents most CSRF attacks, it does not protect against top-level navigation attacks (GET-based state changes) and some browser edge cases.
-- **Requirements:**
-  - Generate a CSRF token on login and store in session (Valkey or DB)
-  - Return token via a `GET /api/v1/auth/csrf` endpoint or as a response header
-  - Frontend stores token in memory (not localStorage) and sends it as `X-CSRF-Token` header on all mutating requests (POST/PATCH/DELETE)
-  - Server middleware validates `X-CSRF-Token` matches session token on all mutating requests
-  - Exempt agent API (Bearer token auth) from CSRF checks — CSRF only applies to cookie-based auth
-  - Token rotation: regenerate on sensitive actions (password change, MFA toggle)
-  - Double-submit cookie pattern as fallback for non-SPA clients
+  - `org_xxx.auto_join_domains` table: `domain TEXT PK`, `default_role TEXT DEFAULT 'member'`, `created_at TIMESTAMPTZ`
+  - On user registration or first login, check if any org has an auto-join domain matching the user's email — if so, auto-add as member with the configured default role
+  - API endpoints: `GET/POST/DELETE /api/v1/auto-join-domains` (owner role only)
+  - UI: Settings page tab for configuring auto-join domains and default role
 
 ---
 
-## Phase 7 — User Experience
+## Phase 11 — User Experience
 
 ### Notifications System
 - **Status:** Not started
@@ -522,7 +636,7 @@ Hardening features for session integrity, threat detection, and token lifecycle.
 ### User Account Page
 - **Status:** ✅ Completed (2026-06-11)
 - **Priority:** 🟢 Low
-- **Description:** Profile page with 3 tabs: Emails (multi-email management, verification), Authentication (password change, multi-device MFA, recovery codes), Active Sessions (list, revoke, revoke all).
+- **Description:** Profile page with 4 tabs: Emails (multi-email management, verification), Password (change password), Authentication (multi-device MFA, recovery codes), Active Sessions (list, revoke, revoke all).
 
 ### Search / Command Palette
 - **Status:** Not started
@@ -536,7 +650,7 @@ Hardening features for session integrity, threat detection, and token lifecycle.
 
 ---
 
-## Phase 8 — Platform & Enterprise Features
+## Phase 12 — Platform & Enterprise Features
 
 ### Org Plan Limits
 - **Status:** Not started
@@ -566,16 +680,6 @@ Hardening features for session integrity, threat detection, and token lifecycle.
   - Dynamic theme loading based on org context
   - Custom email templates with org branding
 
-### API Rate Limiting (Per-Org)
-- **Status:** Not started
-- **Priority:** 🟢 Low
-- **Description:** Per-org rate limits on API and agent endpoints, configurable via org feature flags.
-- **Requirements:**
-  - Token bucket or sliding window rate limiter
-  - Different limits per plan (free: 100 req/min, pro: 1000, enterprise: unlimited)
-  - `X-RateLimit-*` response headers
-  - 429 Too Many Requests response with `Retry-After`
-
 ### Multi-Region / Data Residency
 - **Status:** Not started
 - **Priority:** 🟢 Low
@@ -593,13 +697,12 @@ Hardening features for session integrity, threat detection, and token lifecycle.
 |---|---|---|
 | ~~Standardized API response format~~ | ~~No consistent response envelope — each endpoint invents its own shape; no pagination on list endpoints~~ | ✅ Completed |
 | ~~Structured error codes~~ | ~~All API errors return `{"error": "message"}` — no machine-readable codes for programmatic handling~~ | ✅ Completed |
-| Error boundaries | No React error boundaries — unhandled errors crash the whole app | 🟡 Medium |
+| ~~Request trace IDs~~ | ~~No request ID generated per request — logs, errors, and API responses can't be correlated for debugging~~ | ✅ Completed |
+| Error boundaries | No React error boundaries — unhandled errors crash the whole app | Phase 3 |
 | Loading states | Some pages show raw empty states before data loads | 🟢 Low |
 | Test suite | No unit tests or integration tests exist | 🟡 Medium |
-| Rate limiting | No rate limiting on auth or agent ingest endpoints | 🟡 Medium |
-| OpenAPI spec update | Swagger spec needs agent ingest + token endpoints added | 🟡 Medium |
-| Feature flag consistency | Migrate all feature-gated behavior to use the two-tier flag system (global + org) | 🟡 Medium |
-| ~~Request trace IDs~~ | ~~No request ID generated per request — logs, errors, and API responses can't be correlated for debugging~~ | ✅ Completed |
+| OpenAPI spec update | Swagger spec needs agent ingest + token endpoints added; split base vs org specs | Phase 9 |
+| Feature flag consistency | Migrate all feature-gated behavior to use the two-tier flag system (global + org) | Phase 5 |
 
 ### Standardized API Response Envelope & Pagination
 - **Status:** ✅ Completed (2026-06-12)
@@ -614,7 +717,7 @@ Hardening features for session integrity, threat detection, and token lifecycle.
   - All ~250 handler call sites migrated from legacy `writeJSON`/`writeError` to new helpers
   - Legacy `writeJSON`/`writeError` functions deprecated (no callers remain)
 - **Not yet implemented:**
-  - Store-level pagination (paginated SQL queries with `COUNT(*) OVER()`) — deferred, infrastructure is ready
+  - Store-level pagination (paginated SQL queries with `COUNT(*) OVER()`) — deferred to Phase 7
   - `go generate` codegen script for error registry — deferred
 
 ### Structured Error Codes
@@ -705,3 +808,4 @@ Hardening features for session integrity, threat detection, and token lifecycle.
 | Structured error codes (30+ codes across 8 categories with `errors.yaml` registry) | 2026-06-12 |
 | Request trace IDs (`req_<hex>` on every request, in logs + headers + response bodies) | 2026-06-12 |
 | Full handler migration (~250 call sites from legacy to new envelope/error format) | 2026-06-12 |
+| MFA Enforcement (`require_mfa` org flag — partial: data model + UI done) | 2026-06-11 |

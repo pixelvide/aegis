@@ -16,6 +16,9 @@ import {
   Bell,
   ChevronsUpDown,
   FolderKanban,
+  Users,
+  Key,
+  ToggleLeft,
 } from "lucide-react"
 import {
   Sidebar,
@@ -46,7 +49,10 @@ import { useDomainMode, baseDomainUrl } from "@/lib/domain"
 
 const orgNav = [
   { to: "/", icon: FolderKanban, label: "Projects" },
+  { to: "/members", icon: Users, label: "Members" },
   { to: "/settings", icon: Settings, label: "Settings" },
+  { to: "/settings/api-tokens", icon: Key, label: "API Tokens" },
+  { to: "/settings/features", icon: ToggleLeft, label: "Features" },
 ]
 
 const projectNav = [
@@ -88,7 +94,9 @@ export function AppSidebar() {
       const fullPath = `/project/${currentProject.id}/${to}`
       return location.pathname.startsWith(fullPath)
     }
-    return location.pathname.startsWith(to)
+    // Exact match for org-level routes to avoid prefix collisions
+    // (e.g., /settings shouldn't match /settings/api-tokens)
+    return location.pathname === to
   }
 
   const getLink = (to: string) => {

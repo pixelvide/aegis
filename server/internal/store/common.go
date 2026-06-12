@@ -293,6 +293,33 @@ var migrations = []migration{
 		ALTER TABLE common.user_sessions ADD COLUMN IF NOT EXISTS device_type TEXT NOT NULL DEFAULT 'desktop';
 		`,
 	},
+	{
+		Version:     11,
+		Description: "Add org_feature_flags table to all org schemas",
+		SQL: `
+		DO $$
+		DECLARE s TEXT;
+		BEGIN
+		  FOR s IN SELECT schema_name FROM information_schema.schemata WHERE schema_name LIKE 'org_%'
+		  LOOP
+		    EXECUTE format('
+		      CREATE TABLE IF NOT EXISTS %I.org_feature_flags (
+		        name        TEXT PRIMARY KEY,
+		        provisioned BOOLEAN NOT NULL DEFAULT FALSE,
+		        enabled     BOOLEAN NOT NULL DEFAULT FALSE,
+		        description TEXT NOT NULL DEFAULT '''',
+		        created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+		        updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		      )', s);
+		    EXECUTE format('
+		      INSERT INTO %I.org_feature_flags (name, provisioned, enabled, description)
+		      VALUES (''org_wide_tokens'', FALSE, FALSE, ''Allow creating org-wide API tokens that access all projects'')
+		      ON CONFLICT (name) DO NOTHING
+		    ', s);
+		  END LOOP;
+		END $$;
+		`,
+	},
 }
 
 func (cs *CommonStore) migrate() error {
@@ -690,6 +717,19 @@ func (cs *CommonStore) ProvisionOrgSchema(ctx context.Context, schemaName string
 		created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
 	);
 	CREATE INDEX IF NOT EXISTS idx_%[1]s_tokens_prefix ON %[1]s.api_tokens(prefix);
+
+	CREATE TABLE IF NOT EXISTS %[1]s.org_feature_flags (
+		name        TEXT PRIMARY KEY,
+		provisioned BOOLEAN NOT NULL DEFAULT FALSE,
+		enabled     BOOLEAN NOT NULL DEFAULT FALSE,
+		description TEXT NOT NULL DEFAULT '',
+		created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+		updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+	);
+
+	INSERT INTO %[1]s.org_feature_flags (name, provisioned, enabled, description)
+	VALUES ('org_wide_tokens', FALSE, FALSE, 'Allow creating org-wide API tokens that access all projects')
+	ON CONFLICT (name) DO NOTHING;
 	`, schemaName)
 
 	_, err := cs.db.ExecContext(ctx, ddl)

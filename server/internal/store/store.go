@@ -92,6 +92,24 @@ type Store interface {
 
 	// --- Lifecycle ---
 
+	// --- Org Feature Flags ---
+
+	// IsOrgFeatureActive returns true only if the flag exists AND is both provisioned and enabled.
+	IsOrgFeatureActive(ctx context.Context, name string) bool
+
+	// ListOrgFeatureFlags returns all org-level feature flags.
+	ListOrgFeatureFlags(ctx context.Context) ([]OrgFeatureFlag, error)
+
+	// SetOrgFeatureEnabled updates the enabled state of an org feature flag.
+	// Returns an error if the flag does not exist or is not provisioned.
+	SetOrgFeatureEnabled(ctx context.Context, name string, enabled bool) error
+
+	// ListAPITokensByProject returns all non-revoked tokens for a specific project.
+	ListAPITokensByProject(ctx context.Context, projectID string) ([]models.APIToken, error)
+
+	// GetAPIToken returns a single token by ID (without hash).
+	GetAPIToken(ctx context.Context, id string) (*models.APIToken, error)
+
 	// Close releases database resources.
 	Close() error
 }

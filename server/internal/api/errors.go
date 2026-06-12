@@ -132,6 +132,10 @@ var (
 		Type: "permission_error", Code: "mfa_required_by_org", Ref: "E60003",
 		Status: http.StatusForbidden, Message: "This organization requires MFA to be enabled",
 	}
+	errFeatureNotProvisioned = ApiError{
+		Type: "permission_error", Code: "feature_not_provisioned", Ref: "E60004",
+		Status: http.StatusForbidden, Message: "Feature is not available for this organization",
+	}
 )
 
 // Rate limit errors

@@ -66,8 +66,8 @@ org_xxx.exploits              -- PoC exploits
 org_xxx.api_tokens            -- agent authentication tokens
 org_xxx.projects              -- code projects
 org_xxx.scans                 -- security scans (legacy)
-org_xxx.org_feature_flags     -- per-org feature toggles (planned)
-org_xxx.org_schema_migrations -- per-org migration tracking (planned)
+org_xxx.org_feature_flags     -- per-org feature toggles (provisioned + enabled)
+org_xxx.org_schema_migrations -- per-org migration tracking (planned, not yet implemented)
 ```
 
 ### Schema Naming
