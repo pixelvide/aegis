@@ -261,18 +261,24 @@ Releases are managed by [release-please](https://github.com/googleapis/release-p
    - Bumps the version in `.release-please-manifest.json`
    - Updates `CHANGELOG.md`
    - Creates a GitHub Release with tag `v*`
-   - Triggers the Docker image build and push to `ghcr.io/pixelvide/aegis`
+   - Triggers two parallel Docker image builds:
+     - **Server image** → `ghcr.io/pixelvide/aegis`
+     - **Agent image** → `ghcr.io/pixelvide/aegis-agent`
+
+> **Note:** The agent image build requires the `LOCALHARNESS_PAT` secret (a GitHub PAT with read access to the `pixelvide/localharness` repo) to clone and cross-compile the localharness runtime.
 
 ### Docker Registry
 
 Released images are pushed to GitHub Container Registry (GHCR):
 
 ```bash
-# Pull latest release
+# Server (platform + API + UI)
 docker pull ghcr.io/pixelvide/aegis:latest
-
-# Pull specific version
 docker pull ghcr.io/pixelvide/aegis:0.1.0
+
+# Agent (security scanner with pre-installed tools)
+docker pull ghcr.io/pixelvide/aegis-agent:latest
+docker pull ghcr.io/pixelvide/aegis-agent:0.1.0
 ```
 
 ### Documentation Site

@@ -33,26 +33,32 @@ go build -o aegis .
 
 The `agent/go.mod` uses a `replace` directive pointing at the local `local-harness/` checkout. For production builds, remove the `replace` directive and ensure the `github.com/pixelvide/localharness` module is accessible.
 
-### Docker
+### Docker (pull from registry)
+
+```bash
+docker pull ghcr.io/pixelvide/aegis-agent:latest
+```
+
+### Docker (build locally)
+
+Requires Go 1.25+ and Docker. The build cross-compiles both the `localharness` runtime and the `aegis` agent, then packages them into an Ubuntu 24.04 image.
 
 ```bash
 cd agent
-docker build -t aegis-agent .
+make docker
 ```
 
-The Docker image uses a multi-stage build:
-1. **Build stage:** `golang:1.25-alpine` — compiles the Go binary
-2. **Runtime stage:** `ubuntu:24.04` — full-featured runtime with security tools
+> **Note:** The Makefile expects the `local-harness/` repo at `../../local-harness` (sibling directory). Adjust `LOCALHARNESS_REPO` in the Makefile if your layout differs.
 
-**Pre-installed tools** (available to personas at runtime):
-- `curl`, `wget` — HTTP testing
-- `nmap` — port scanning
-- `git` — repository cloning
-- `jq` — JSON processing
-- `python3` + `pip` + `venv` — exploit scripts
-- `bash` — shell scripts
-- `dnsutils` — DNS analysis
-- Full `apt` access for installing additional tools
+**Pre-installed security tools** (available to personas at runtime):
+- **SAST:** `semgrep` — static analysis
+- **Go:** `govulncheck` — Go vulnerability scanner
+- **Python:** `pip-audit` — Python dependency audit
+- **PHP:** `composer` — PHP package manager + `composer audit`
+- **Node.js:** `npm audit` — JavaScript dependency audit
+- **General:** `curl`, `wget`, `git`, `jq`, `ripgrep`, `nmap`, `dnsutils`
+- **Runtime:** `python3`, `pip`, `venv`, `build-essential`
+- Full `apt` access for installing additional tools at runtime
 
 ---
 
@@ -214,7 +220,7 @@ Findings are always written to `.aegis/findings.json` in the workspace:
 docker run --rm \
   -v /path/to/project:/workspace \
   -e GEMINI_API_KEY=your-key \
-  aegis-agent sharingan
+  ghcr.io/pixelvide/aegis-agent sharingan
 ```
 
 ### With Server Reporting
@@ -226,7 +232,7 @@ docker run --rm \
   -e AEGIS_API_KEY=aegis_xxx \
   -e AEGIS_BASE_URL=https://acme.aegis.io \
   -e AEGIS_PROJECT_ID=<uuid> \
-  aegis-agent sharingan
+  ghcr.io/pixelvide/aegis-agent sharingan
 ```
 
 ### Using `aegis-run` Script
@@ -271,7 +277,7 @@ jobs:
             -e AEGIS_API_KEY=${{ secrets.AEGIS_API_KEY }} \
             -e AEGIS_BASE_URL=${{ secrets.AEGIS_BASE_URL }} \
             -e AEGIS_PROJECT_ID=${{ secrets.AEGIS_PROJECT_ID }} \
-            aegis-agent sharingan
+            ghcr.io/pixelvide/aegis-agent sharingan
 
       - name: Upload Findings
         if: always()
@@ -286,7 +292,7 @@ jobs:
 ```yaml
 aegis-scan:
   stage: test
-  image: aegis-agent:latest
+  image: ghcr.io/pixelvide/aegis-agent:latest
   variables:
     GEMINI_API_KEY: $GEMINI_API_KEY
     AEGIS_API_KEY: $AEGIS_API_KEY
