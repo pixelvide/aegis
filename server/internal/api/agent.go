@@ -1,6 +1,7 @@
 package api
 
 import (
+	"log/slog"
 	"net/http"
 	"regexp"
 	"strings"
@@ -67,6 +68,7 @@ var (
 func (s *Server) handleAgentCreateFinding(w http.ResponseWriter, r *http.Request) {
 	var req AgentFindingRequest
 	if err := decodeJSON(r, &req); err != nil {
+		slog.Error("agent finding decode error", "error", err, "content_type", r.Header.Get("Content-Type"), "content_length", r.ContentLength)
 		writeApiError(w, r, errValidationInvalidBody)
 		return
 	}
@@ -182,6 +184,7 @@ func (s *Server) handleAgentCreateFinding(w http.ResponseWriter, r *http.Request
 	// Upsert with fingerprint deduplication
 	deduplicated, err := ts.UpsertFinding(r.Context(), finding)
 	if err != nil {
+		slog.Error("upsert finding failed", "error", err, "fingerprint", finding.Fingerprint, "project_id", finding.ProjectID)
 		writeApiError(w, r, errServerInternal)
 		return
 	}

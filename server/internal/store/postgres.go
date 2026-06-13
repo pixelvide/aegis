@@ -345,7 +345,7 @@ func (p *Postgres) UpsertFinding(ctx context.Context, f *models.Finding) (bool, 
 		) VALUES ($1,$2,$3::uuid,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,1,NOW(),$17,$18)
 		ON CONFLICT (fingerprint) WHERE fingerprint != ''
 		DO UPDATE SET
-			seen_count = %[1]s.findings.seen_count + 1,
+			seen_count = findings.seen_count + 1,
 			last_seen_at = NOW(),
 			updated_at = NOW(),
 			line = EXCLUDED.line,
