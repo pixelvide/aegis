@@ -1,24 +1,18 @@
-import { NavLink, useLocation } from "react-router-dom"
+import { NavLink, useLocation, useNavigate } from "react-router-dom"
 import {
   LayoutDashboard,
   Search,
   Bug,
   Bot,
   Settings,
-  Plus,
-  FileText,
-  BarChart3,
-  MoreHorizontal,
-  HelpCircle,
   LogOut,
-  CreditCard,
   User,
-  Bell,
   ChevronsUpDown,
   FolderKanban,
   Users,
   Key,
   ToggleLeft,
+  ArrowLeft,
 } from "lucide-react"
 import {
   Sidebar,
@@ -62,10 +56,6 @@ const projectNav = [
   { to: "agents", icon: Bot, label: "Agents" },
 ]
 
-const projectResourcesNav = [
-  { to: "reports", icon: FileText, label: "Reports" },
-  { to: "analytics", icon: BarChart3, label: "Analytics" },
-]
 
 const projectBottomNav = [
   { to: "settings", icon: Settings, label: "Settings" },
@@ -88,6 +78,7 @@ export function AppSidebar() {
   const { user, logout } = useAuth()
   const { currentProject } = useProject()
   const { baseDomain } = useDomainMode()
+  const navigate = useNavigate()
 
   const isActive = (to: string) => {
     if (to === "/") return location.pathname === "/"
@@ -120,24 +111,27 @@ export function AppSidebar() {
       </SidebarHeader>
 
       <SidebarContent>
-        {/* Quick Create - only in project context */}
+        {/* Back to org-level navigation */}
         {currentProject && (
         <SidebarGroup>
           <SidebarGroupContent>
             <SidebarMenu>
-              <SidebarMenuItem className="flex items-center gap-2">
+              <SidebarMenuItem>
                 <SidebarMenuButton
-                  tooltip="New Scan"
-                  className="min-w-8 bg-primary text-primary-foreground duration-200 ease-linear hover:bg-primary/90 hover:text-primary-foreground active:bg-primary/90 active:text-primary-foreground"
+                  tooltip="All Projects"
+                  onClick={() => navigate("/")}
+                  className="text-muted-foreground hover:text-foreground"
+                  id="back-to-org-nav"
                 >
-                  <Plus />
-                  <span>New Scan</span>
+                  <ArrowLeft />
+                  <span>All Projects</span>
                 </SidebarMenuButton>
               </SidebarMenuItem>
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
         )}
+
 
         {/* Main Navigation */}
         <SidebarGroup>
@@ -162,32 +156,6 @@ export function AppSidebar() {
           </SidebarGroupContent>
         </SidebarGroup>
 
-        {/* Resources */}
-        {currentProject && (
-        <SidebarGroup className="group-data-[collapsible=icon]:hidden">
-          <SidebarGroupLabel>Resources</SidebarGroupLabel>
-          <SidebarGroupContent>
-            <SidebarMenu>
-              {projectResourcesNav.map((item) => (
-                <SidebarMenuItem key={item.to}>
-                  <SidebarMenuButton asChild isActive={isActive(item.to)} tooltip={item.label}>
-                    <NavLink to={getLink(item.to)}>
-                      <item.icon />
-                      <span>{item.label}</span>
-                    </NavLink>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-              ))}
-              <SidebarMenuItem>
-                <SidebarMenuButton className="text-sidebar-foreground/70">
-                  <MoreHorizontal />
-                  <span>More</span>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-            </SidebarMenu>
-          </SidebarGroupContent>
-        </SidebarGroup>
-        )}
 
         {/* Bottom group — pushed to bottom */}
         <SidebarGroup className="mt-auto">
@@ -203,18 +171,7 @@ export function AppSidebar() {
                   </SidebarMenuButton>
                 </SidebarMenuItem>
               ))}
-              <SidebarMenuItem>
-                <SidebarMenuButton tooltip="Get Help">
-                  <HelpCircle />
-                  <span>Get Help</span>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-              <SidebarMenuItem>
-                <SidebarMenuButton tooltip="Search">
-                  <Search />
-                  <span>Search</span>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
+
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
@@ -270,14 +227,6 @@ export function AppSidebar() {
                   }}>
                     <User className="mr-2 h-4 w-4" />
                     Manage Account
-                  </DropdownMenuItem>
-                  <DropdownMenuItem>
-                    <CreditCard className="mr-2 h-4 w-4" />
-                    Billing
-                  </DropdownMenuItem>
-                  <DropdownMenuItem>
-                    <Bell className="mr-2 h-4 w-4" />
-                    Notifications
                   </DropdownMenuItem>
                 </DropdownMenuGroup>
 

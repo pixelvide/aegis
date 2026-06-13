@@ -4,23 +4,22 @@ import { SeverityBadge, FindingStatusBadge } from "@/components/severity-badge"
 import { Card, CardContent } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Bug, Filter, ArrowUpDown } from "lucide-react"
-import { findingsApi, projectsApi } from "@/lib/api"
+import { findingsApi } from "@/lib/api"
 import { formatDate } from "@/lib/utils"
-import type { Finding, Severity, FindingStatus, Project } from "@/lib/types"
+import { useProject } from "@/lib/project-context"
+import type { Finding, Severity, FindingStatus } from "@/lib/types"
 
 export default function FindingsPage() {
   const [findings, setFindings] = useState<Finding[]>([])
   const [loading, setLoading] = useState(true)
   const [severityFilter, setSeverityFilter] = useState<string>("")
   const [statusFilter, setStatusFilter] = useState<string>("")
-  const [projectFilter, setProjectFilter] = useState<string>("")
-  const [projects, setProjects] = useState<Project[]>([])
+  const { currentProject } = useProject()
 
-  const fetchFindings = useCallback((severity: string, status: string, projectId: string) => {
+  const fetchFindings = useCallback((severity: string, status: string) => {
     findingsApi.list({
       severity: severity || undefined,
       status: status || undefined,
-      project_id: projectId || undefined,
     })
       .then(setFindings)
       .catch(() => setFindings([]))
@@ -28,12 +27,8 @@ export default function FindingsPage() {
   }, [])
 
   useEffect(() => {
-    projectsApi.list().then(setProjects).catch(() => setProjects([]))
-  }, [])
-
-  useEffect(() => {
-    fetchFindings(severityFilter, statusFilter, projectFilter)
-  }, [fetchFindings, severityFilter, statusFilter, projectFilter])
+    fetchFindings(severityFilter, statusFilter)
+  }, [fetchFindings, severityFilter, statusFilter])
 
   const severities: Severity[] = ["critical", "high", "medium", "low", "info"]
   const statuses: FindingStatus[] = ["open", "confirmed", "fixed", "false_positive", "wontfix", "verified"]
@@ -71,22 +66,11 @@ export default function FindingsPage() {
               <option key={s} value={s}>{s.replace("_", " ")}</option>
             ))}
           </select>
-          <select
-            value={projectFilter}
-            onChange={(e) => { setLoading(true); setProjectFilter(e.target.value) }}
-            className="rounded-md border bg-background px-3 py-1.5 text-sm"
-            id="project-filter"
-          >
-            <option value="">All Projects</option>
-            {projects.map((p) => (
-              <option key={p.id} value={p.id}>{p.name}</option>
-            ))}
-          </select>
-          {(severityFilter || statusFilter || projectFilter) && (
+          {(severityFilter || statusFilter) && (
             <Button
               variant="ghost"
               size="sm"
-              onClick={() => { setLoading(true); setSeverityFilter(""); setStatusFilter(""); setProjectFilter("") }}
+              onClick={() => { setLoading(true); setSeverityFilter(""); setStatusFilter("") }}
             >
               Clear
             </Button>
@@ -138,7 +122,7 @@ export default function FindingsPage() {
                       <td className="px-4 py-3 font-mono text-xs">{f.id}</td>
                       <td className="px-4 py-3">
                         <Link
-                          to={`/findings/${f.id}`}
+                          to={currentProject ? `/project/${currentProject.id}/findings/${f.id}` : `findings/${f.id}`}
                           className="font-medium hover:underline hover:text-blue-600 transition-colors"
                         >
                           {f.title}

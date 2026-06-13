@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Separator } from "@/components/ui/separator"
 import { findingsApi } from "@/lib/api"
+import { useProject } from "@/lib/project-context"
 import { formatDate, copyToClipboard } from "@/lib/utils"
 import type { Finding, FindingStatus } from "@/lib/types"
 import {
@@ -14,6 +15,8 @@ import {
 
 export default function FindingDetailPage() {
   const { id } = useParams<{ id: string }>()
+  const { currentProject } = useProject()
+  const findingsPath = currentProject ? `/project/${currentProject.id}/findings` : "/findings"
   const [finding, setFinding] = useState<Finding | null>(null)
   const [loading, setLoading] = useState(true)
   const [activeExploit, setActiveExploit] = useState(0)
@@ -52,7 +55,7 @@ export default function FindingDetailPage() {
     return (
       <div className="text-center py-20">
         <p className="text-lg font-medium">Finding not found</p>
-        <Link to="/findings" className="text-blue-600 hover:underline text-sm mt-2 inline-block">
+        <Link to={findingsPath} className="text-blue-600 hover:underline text-sm mt-2 inline-block">
           Back to findings
         </Link>
       </div>
@@ -63,7 +66,7 @@ export default function FindingDetailPage() {
     <div className="space-y-6">
       {/* Header */}
       <div className="flex items-start gap-4">
-        <Link to="/findings" className="mt-1">
+        <Link to={findingsPath} className="mt-1">
           <ArrowLeft className="h-5 w-5 text-muted-foreground hover:text-foreground transition-colors" />
         </Link>
         <div className="flex-1">

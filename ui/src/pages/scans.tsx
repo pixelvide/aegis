@@ -1,12 +1,12 @@
-import { useEffect, useState, useCallback } from "react"
+import { useEffect, useState } from "react"
 import { Link } from "react-router-dom"
 import { ScanStatusBadge } from "@/components/severity-badge"
 import { Card, CardContent } from "@/components/ui/card"
-import { Button } from "@/components/ui/button"
 import { scansApi } from "@/lib/api"
+import { useProject } from "@/lib/project-context"
 import { timeAgo } from "@/lib/utils"
 import type { Scan } from "@/lib/types"
-import { Search, Plus, Eye, Zap, FlaskConical, Trash2 } from "lucide-react"
+import { Search, Eye, Zap, FlaskConical } from "lucide-react"
 
 const personaIcons: Record<string, { icon: typeof Eye; label: string; color: string }> = {
   sharingan: { icon: Eye, label: "Sharingan", color: "text-red-500" },
@@ -17,14 +17,7 @@ const personaIcons: Record<string, { icon: typeof Eye; label: string; color: str
 export default function ScansPage() {
   const [scans, setScans] = useState<Scan[]>([])
   const [loading, setLoading] = useState(true)
-
-  const loadScans = useCallback(() => {
-    setLoading(true)
-    scansApi.list()
-      .then(setScans)
-      .catch(() => setScans([]))
-      .finally(() => setLoading(false))
-  }, [])
+  const { currentProject } = useProject()
 
   useEffect(() => {
     scansApi.list()
@@ -33,19 +26,11 @@ export default function ScansPage() {
       .finally(() => setLoading(false))
   }, [])
 
-  const handleDelete = async (id: string) => {
-    await scansApi.delete(id)
-    loadScans()
-  }
-
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h1 className="text-lg font-semibold">Scans</h1>
-        <Button id="create-scan-button">
-          <Plus className="h-4 w-4 mr-2" />
-          New Scan
-        </Button>
+        <span className="text-sm text-muted-foreground">{scans.length} total</span>
       </div>
 
       {loading ? (
@@ -72,7 +57,6 @@ export default function ScansPage() {
                   <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground">Status</th>
                   <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground">Findings</th>
                   <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground">Created</th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground">Actions</th>
                 </tr>
               </thead>
               <tbody>
@@ -83,7 +67,7 @@ export default function ScansPage() {
                     <tr key={scan.id} className="border-b last:border-0 hover:bg-muted/50 transition-colors">
                       <td className="px-4 py-3">
                         <Link
-                          to={`/scans/${scan.id}`}
+                          to={currentProject ? `/project/${currentProject.id}/findings?scan_id=${scan.id}` : '#'}
                           className="font-medium hover:underline hover:text-blue-600"
                         >
                           {scan.name}
@@ -101,16 +85,6 @@ export default function ScansPage() {
                       <td className="px-4 py-3"><ScanStatusBadge status={scan.status} /></td>
                       <td className="px-4 py-3 font-medium">{scan.finding_count}</td>
                       <td className="px-4 py-3 text-xs text-muted-foreground">{timeAgo(scan.created_at)}</td>
-                      <td className="px-4 py-3">
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-8 w-8 text-muted-foreground hover:text-red-500"
-                          onClick={() => handleDelete(scan.id)}
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
-                      </td>
                     </tr>
                   )
                 })}

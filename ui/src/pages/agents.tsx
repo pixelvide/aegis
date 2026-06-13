@@ -1,7 +1,6 @@
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
-import { Button } from "@/components/ui/button"
-import { Bot, Eye, Zap, FlaskConical, Play, Circle } from "lucide-react"
+import { Bot, Eye, Zap, FlaskConical, Circle } from "lucide-react"
 
 const personas = [
   {
@@ -62,10 +61,6 @@ export default function AgentsPage() {
                     </Badge>
                   ))}
                 </div>
-                <Button size="sm" variant="outline" className="w-full gap-2 text-xs">
-                  <Play className="h-3 w-3" />
-                  Run Scan
-                </Button>
               </CardContent>
             </Card>
           )
