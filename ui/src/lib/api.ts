@@ -113,8 +113,6 @@ export async function request<T>(path: string, options?: RequestInit): Promise<T
   // Inject org context header for tenant-scoped requests
   if (_currentOrgId) {
     headers["X-Org-ID"] = _currentOrgId
-  } else if (_currentOrgSlug) {
-    headers["X-Org-Slug"] = _currentOrgSlug
   }
 
   const res = await fetch(`${BASE}${path}`, {
@@ -177,8 +175,6 @@ export async function requestList<T>(
   }
   if (_currentOrgId) {
     headers["X-Org-ID"] = _currentOrgId
-  } else if (_currentOrgSlug) {
-    headers["X-Org-Slug"] = _currentOrgSlug
   }
 
   const res = await fetch(`${BASE}${fullPath}`, {
