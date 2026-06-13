@@ -50,12 +50,8 @@ func IsAdminOrOwner(ctx context.Context) bool {
 // a schema-scoped Store into the context.
 //
 // Resolution order:
-//  1. Subdomain (if AEGIS_BASE_DOMAIN is set): acme.aegis.io → slug "acme"
+//  1. Subdomain: acme.aegis.io → slug "acme"
 //  2. Custom domain: security.acme.com → lookup in organizations.custom_domain
-//  3. X-Org-ID header (UUID)
-//
-// When AEGIS_BASE_DOMAIN is set and a subdomain is present, the X-Org-ID header
-// is ignored to prevent confused-deputy attacks.
 //
 // If an authenticated user is in context, verifies org membership.
 func TenantResolver(common *store.CommonStore, cfg *config.Config) func(http.Handler) http.Handler {
@@ -63,9 +59,8 @@ func TenantResolver(common *store.CommonStore, cfg *config.Config) func(http.Han
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			var org *models.Organization
 			var err error
-			var resolvedFromDomain bool
 
-			// 1. Try subdomain resolution (production mode)
+			// 1. Try subdomain resolution
 			if cfg.BaseDomain != "" {
 				host := r.Host
 				if idx := strings.LastIndex(host, ":"); idx != -1 {
@@ -74,7 +69,6 @@ func TenantResolver(common *store.CommonStore, cfg *config.Config) func(http.Han
 				subdomain := extractSubdomain(host, cfg.BaseDomain)
 				if subdomain != "" {
 					org, err = common.GetOrgBySlug(r.Context(), subdomain)
-					resolvedFromDomain = true
 				}
 			}
 
@@ -86,24 +80,6 @@ func TenantResolver(common *store.CommonStore, cfg *config.Config) func(http.Han
 				}
 				if !strings.HasSuffix(host, cfg.BaseDomain) {
 					org, err = common.GetOrgByDomain(r.Context(), host)
-					if org != nil {
-						resolvedFromDomain = true
-					}
-				}
-			}
-
-			// 3. If domain resolved the org, reject conflicting X-Org-ID header
-			if resolvedFromDomain && org != nil {
-				if headerID := r.Header.Get("X-Org-ID"); headerID != "" && headerID != org.ID {
-					writeMiddlewareError(w, r, errTenantHeaderConflictID)
-					return
-				}
-			}
-
-			// 4. Fallback to X-Org-ID header (dev mode, no subdomain)
-			if org == nil && err == nil {
-				if orgID := r.Header.Get("X-Org-ID"); orgID != "" {
-					org, err = common.GetOrganization(r.Context(), orgID)
 				}
 			}
 

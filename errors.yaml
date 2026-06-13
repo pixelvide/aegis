@@ -71,10 +71,6 @@ types:
         ref: E30004
         status: 409
         message: "Organization slug is reserved"
-      header_conflict:
-        ref: E30005
-        status: 400
-        message: "Org header conflicts with subdomain"
 
   resource_error:
     codes:

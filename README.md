@@ -65,22 +65,10 @@ docker compose up --build -d
 
 | URL | What happens |
 |---|---|
-| `http://lvh.me:8080` | Base domain — no subdomain, header-only mode |
+| `http://lvh.me:8080` | Base domain — auth flows (login, register) happen here |
 | `http://test.lvh.me:8080` | Resolves org with slug `test` from subdomain |
 | `http://acme.lvh.me:8080` | Resolves org with slug `acme` from subdomain |
 | Any new org slug | Works instantly — `*.lvh.me` is a wildcard |
-
-**Testing the mismatch guard:**
-
-```bash
-# This works — subdomain matches
-curl -b cookies.txt http://test.lvh.me:8080/api/v1/findings
-
-# This is REJECTED (400) — subdomain says "test" but header says a different org ID
-curl -b cookies.txt http://test.lvh.me:8080/api/v1/findings \
-  -H "X-Org-ID: 00000000-0000-0000-0000-000000000000"
-# → {"error":"X-Org-ID header conflicts with subdomain"}
-```
 
 > **Production:** Set `AEGIS_BASE_DOMAIN=aegis.io` (or your domain). Configure DNS with a wildcard `*.aegis.io → your-server-ip`.
 
@@ -100,7 +88,7 @@ curl -b cookies.txt http://test.lvh.me:8080/api/v1/findings \
 │  ┌──────────┐  ┌──────────────┐  ┌──────────────────────────┐  │
 │  │ Auth MW  │→ │ Tenant MW    │→ │ Handlers                 │  │
 │  │ (JWT     │  │ (subdomain / │  │ findings, exploits,      │  │
-│  │  cookie) │  │  X-Org-ID)   │  │ orgs, projects, members  │  │
+│  │  cookie) │  │  custom dom) │  │ orgs, projects, members  │  │
 │  └──────────┘  └──────────────┘  └──────────────────────────┘  │
 │  ┌──────────┐  ┌──────────────────────────────────────────────┐ │
 │  │ Token MW │→ │ Agent Ingest API (Bearer token auth)         │ │
@@ -236,7 +224,7 @@ All configuration is via environment variables:
 | `JWT_SECRET` | *(auto-gen dev)* | Secret for JWT signing. **Set in production.** |
 | `AEGIS_PORT` | `8080` | HTTP listen port |
 | `AEGIS_BIND` | `127.0.0.1` | Bind address (`0.0.0.0` in Docker) |
-| `AEGIS_BASE_DOMAIN` | *(empty)* | Base domain for subdomain org resolution (e.g., `aegis.io`) |
+| `AEGIS_BASE_DOMAIN` | `lvh.me` | Base domain for subdomain org resolution (e.g., `aegis.io`) |
 | `AEGIS_ALLOWED_ORIGINS` | `http://localhost:5173` | CORS origins (comma-separated) |
 | `POSTGRES_USER` | `aegis` | PostgreSQL user |
 | `POSTGRES_PASSWORD` | `aegis` | PostgreSQL password |
@@ -311,9 +299,7 @@ All configuration is via environment variables:
 | GET | `/api/v1/tokens` | List tokens (prefix + metadata) |
 | DELETE | `/api/v1/tokens/{id}` | Revoke token |
 
-Org-scoped endpoints require an `X-Org-ID` header (or subdomain when `AEGIS_BASE_DOMAIN` is set).
-
-Agent endpoints use `Authorization: Bearer aegis_xxx` tokens instead of cookies.
+Org-scoped endpoints require requests to be made on an org subdomain (e.g., `acme.lvh.me:8080` in dev or `acme.aegis.io` in production) or a custom domain.
 
 ### Operational (public)
 | Method | Endpoint | Description |

@@ -110,11 +110,6 @@ export async function request<T>(path: string, options?: RequestInit): Promise<T
     "Content-Type": "application/json",
   }
 
-  // Inject org context header for tenant-scoped requests
-  if (_currentOrgId) {
-    headers["X-Org-ID"] = _currentOrgId
-  }
-
   const res = await fetch(`${BASE}${path}`, {
     ...options,
     credentials: "include",
@@ -172,9 +167,6 @@ export async function requestList<T>(
 
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
-  }
-  if (_currentOrgId) {
-    headers["X-Org-ID"] = _currentOrgId
   }
 
   const res = await fetch(`${BASE}${fullPath}`, {

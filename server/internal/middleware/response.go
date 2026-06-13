@@ -100,20 +100,16 @@ var (
 	// Tenant errors
 	errTenantNotFound = MiddlewareError{
 		Type: "tenant_error", Code: "not_found", Ref: "E30001",
-		Status: http.StatusBadRequest, Message: "Organization not found, set X-Org-ID header or use org subdomain",
+		Status: http.StatusBadRequest, Message: "Unable to resolve organization",
 	}
 	errTenantNotMember = MiddlewareError{
 		Type: "tenant_error", Code: "not_member", Ref: "E30002",
 		Status: http.StatusForbidden, Message: "You are not a member of this organization",
 	}
-	errTenantHeaderConflictID = MiddlewareError{
-		Type: "tenant_error", Code: "header_conflict", Ref: "E30005",
-		Status: http.StatusBadRequest, Message: "X-Org-ID header conflicts with subdomain",
-	}
 
 	errTenantOrgNotFoundAuth = MiddlewareError{
 		Type: "tenant_error", Code: "not_found", Ref: "E30001",
-		Status: http.StatusUnauthorized, Message: "Organization not found",
+		Status: http.StatusUnauthorized, Message: "Unable to resolve organization",
 	}
 
 	// Server errors

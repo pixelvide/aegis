@@ -27,7 +27,7 @@ type Config struct {
 
 	// BaseDomain is the base domain for subdomain-based org resolution.
 	// e.g., "aegis.io" means orgs are accessed via acme.aegis.io.
-	// Empty = no subdomain resolution (use X-Org-ID header instead).
+	// Defaults to "lvh.me" for local development (*.lvh.me resolves to 127.0.0.1).
 	BaseDomain string
 
 	// AllowedOrigins for CORS. Default: http://lvh.me:8080 (Docker dev).
@@ -103,6 +103,8 @@ func Load() (*Config, error) {
 
 	if domain := os.Getenv("AEGIS_BASE_DOMAIN"); domain != "" {
 		cfg.BaseDomain = domain
+	} else {
+		cfg.BaseDomain = "lvh.me"
 	}
 
 	if origins := os.Getenv("AEGIS_ALLOWED_ORIGINS"); origins != "" {

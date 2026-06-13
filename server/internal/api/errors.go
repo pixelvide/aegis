@@ -76,10 +76,6 @@ var (
 		Type: "tenant_error", Code: "slug_reserved", Ref: "E30004",
 		Status: http.StatusConflict, Message: "Organization slug is reserved",
 	}
-	errTenantHeaderConflict = ApiError{
-		Type: "tenant_error", Code: "header_conflict", Ref: "E30005",
-		Status: http.StatusBadRequest, Message: "Org header conflicts with subdomain",
-	}
 )
 
 // Resource errors

@@ -9,10 +9,10 @@ info:
     set by the login or register endpoints.
 
     ## Multi-Tenancy
-    Org-scoped endpoints require an `X-Org-ID` header (UUID) to identify
-    which organization's data to access. When `AEGIS_BASE_DOMAIN` is set,
-    the org is resolved from the subdomain instead. The server verifies
-    the user's membership in that org before processing the request.
+    Org-scoped endpoints require requests to be made on an org subdomain
+    (e.g., `acme.aegis.io`) or a custom domain. The server resolves the org
+    from the `Host` header and verifies the user's membership before
+    processing the request.
   version: 0.1.0
   contact:
     name: Pixelvide
@@ -237,7 +237,6 @@ paths:
       security:
         - cookieAuth: []
       parameters:
-        - $ref: "#/components/parameters/OrgHeader"
       requestBody:
         required: true
         content:
@@ -260,7 +259,6 @@ paths:
       security:
         - cookieAuth: []
       parameters:
-        - $ref: "#/components/parameters/OrgHeader"
       responses:
         "200":
           description: List of scans
@@ -279,7 +277,6 @@ paths:
       security:
         - cookieAuth: []
       parameters:
-        - $ref: "#/components/parameters/OrgHeader"
         - $ref: "#/components/parameters/IdPath"
       responses:
         "200":
@@ -297,7 +294,6 @@ paths:
       security:
         - cookieAuth: []
       parameters:
-        - $ref: "#/components/parameters/OrgHeader"
         - $ref: "#/components/parameters/IdPath"
       requestBody:
         required: true
@@ -324,7 +320,6 @@ paths:
       security:
         - cookieAuth: []
       parameters:
-        - $ref: "#/components/parameters/OrgHeader"
         - $ref: "#/components/parameters/IdPath"
       responses:
         "204":
@@ -338,7 +333,6 @@ paths:
       security:
         - cookieAuth: []
       parameters:
-        - $ref: "#/components/parameters/OrgHeader"
         - $ref: "#/components/parameters/IdPath"
       responses:
         "200":
@@ -366,7 +360,6 @@ paths:
       security:
         - cookieAuth: []
       parameters:
-        - $ref: "#/components/parameters/OrgHeader"
         - name: scan_id
           in: query
           schema:
@@ -405,7 +398,6 @@ paths:
       security:
         - cookieAuth: []
       parameters:
-        - $ref: "#/components/parameters/OrgHeader"
         - $ref: "#/components/parameters/IdPath"
       responses:
         "200":
@@ -423,7 +415,6 @@ paths:
       security:
         - cookieAuth: []
       parameters:
-        - $ref: "#/components/parameters/OrgHeader"
         - $ref: "#/components/parameters/IdPath"
       requestBody:
         required: true
@@ -453,7 +444,6 @@ paths:
       security:
         - cookieAuth: []
       parameters:
-        - $ref: "#/components/parameters/OrgHeader"
         - $ref: "#/components/parameters/IdPath"
       responses:
         "200":
@@ -473,7 +463,6 @@ paths:
       security:
         - cookieAuth: []
       parameters:
-        - $ref: "#/components/parameters/OrgHeader"
         - $ref: "#/components/parameters/IdPath"
         - name: eid
           in: path
@@ -501,7 +490,6 @@ paths:
       security:
         - cookieAuth: []
       parameters:
-        - $ref: "#/components/parameters/OrgHeader"
       responses:
         "200":
           description: Dashboard stats
@@ -520,7 +508,6 @@ paths:
       security:
         - cookieAuth: []
       parameters:
-        - $ref: "#/components/parameters/OrgHeader"
       requestBody:
         required: true
         content:
@@ -543,7 +530,6 @@ paths:
       security:
         - cookieAuth: []
       parameters:
-        - $ref: "#/components/parameters/OrgHeader"
       responses:
         "200":
           description: List of projects
@@ -562,7 +548,6 @@ paths:
       security:
         - cookieAuth: []
       parameters:
-        - $ref: "#/components/parameters/OrgHeader"
         - $ref: "#/components/parameters/OrgSlugPath"
       responses:
         "200":
@@ -584,7 +569,6 @@ paths:
       security:
         - cookieAuth: []
       parameters:
-        - $ref: "#/components/parameters/OrgHeader"
       responses:
         "200":
           description: List of members
@@ -605,7 +589,6 @@ paths:
       security:
         - cookieAuth: []
       parameters:
-        - $ref: "#/components/parameters/OrgHeader"
       requestBody:
         required: true
         content:
@@ -643,7 +626,6 @@ paths:
       security:
         - cookieAuth: []
       parameters:
-        - $ref: "#/components/parameters/OrgHeader"
         - name: userId
           in: path
           required: true
@@ -693,14 +675,6 @@ components:
       description: JWT HttpOnly cookie set by login/register
 
   parameters:
-    OrgHeader:
-      name: X-Org-ID
-      in: header
-      required: true
-      schema:
-        type: string
-        format: uuid
-      description: Organization UUID (not needed when using org subdomains)
     IdPath:
       name: id
       in: path

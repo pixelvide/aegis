@@ -31,7 +31,7 @@ func AgentTokenFromContext(ctx context.Context) *models.APIToken {
 //
 // Flow:
 //  1. Extract "Bearer aegis_xxx" from Authorization header
-//  2. Resolve org from subdomain (Host header) or X-Org-ID fallback
+//  2. Resolve org from subdomain (Host header) or custom domain
 //  3. Load tenant store for that org
 //  4. Look up token by prefix in org's api_tokens table
 //  5. Verify full token against stored bcrypt hash
@@ -63,22 +63,19 @@ func TokenAuth(common *store.CommonStore, cfg *config.Config) func(http.Handler)
 				return
 			}
 
-			// 2. Resolve org from subdomain or header
+			// 2. Resolve org from subdomain or custom domain
 			var org *models.Organization
 			var err error
-			var resolvedFromDomain bool
 
-			// Try subdomain first (production)
+			// Try subdomain first
 			if cfg.BaseDomain != "" {
 				host := r.Host
-				// Strip port if present
 				if idx := strings.LastIndex(host, ":"); idx != -1 {
 					host = host[:idx]
 				}
 				subdomain := extractSubdomain(host, cfg.BaseDomain)
 				if subdomain != "" {
 					org, err = common.GetOrgBySlug(r.Context(), subdomain)
-					resolvedFromDomain = true
 				}
 			}
 
@@ -90,24 +87,6 @@ func TokenAuth(common *store.CommonStore, cfg *config.Config) func(http.Handler)
 				}
 				if !strings.HasSuffix(host, cfg.BaseDomain) {
 					org, err = common.GetOrgByDomain(r.Context(), host)
-					if org != nil {
-						resolvedFromDomain = true
-					}
-				}
-			}
-
-			// If domain resolved the org, reject conflicting X-Org-ID header
-			if resolvedFromDomain && org != nil {
-				if headerID := r.Header.Get("X-Org-ID"); headerID != "" && headerID != org.ID {
-					writeMiddlewareError(w, r, errTenantHeaderConflictID)
-					return
-				}
-			}
-
-			// Fallback to X-Org-ID header (dev mode)
-			if org == nil && err == nil {
-				if orgID := r.Header.Get("X-Org-ID"); orgID != "" {
-					org, err = common.GetOrganization(r.Context(), orgID)
 				}
 			}
 

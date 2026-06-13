@@ -52,6 +52,7 @@ make docker
 
 **Pre-installed security tools** (available to personas at runtime):
 - **SAST:** `semgrep` — static analysis
+- **SAST:** `codeql` — deep semantic code analysis (GitHub CodeQL bundle with standard query packs)
 - **Go:** `govulncheck` — Go vulnerability scanner
 - **Python:** `pip-audit` — Python dependency audit
 - **PHP:** `composer` — PHP package manager + `composer audit`

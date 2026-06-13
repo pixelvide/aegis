@@ -56,7 +56,7 @@ Migrations are versioned and tracked in `common.schema_migrations`.
 - **Passwords:** bcrypt cost 12, via `auth.HashPassword()` / `auth.CheckPassword()`
 - **Sessions:** JWT stored in `aegis_token` HttpOnly cookie (SameSite=Lax, 24h TTL)
 - **Token signing:** HS256 with `JWT_SECRET` env var. Auto-generated in dev (ephemeral).
-- **Middleware chain (users):** `Auth(jwt) → TenantResolver(subdomain/header + membership check) → Handler`
+- **Middleware chain (users):** `Auth(jwt) → TenantResolver(subdomain/custom domain + membership check) → Handler`
 - **Password hash** is tagged `json:"-"` on the User model — never exposed in API responses.
 - **Email enumeration** is prevented: login returns the same error for wrong email and wrong password.
 - **Base domain restriction:** When `AEGIS_BASE_DOMAIN` is set, all public auth endpoints (register, login, logout, forgot-password, reset-password, MFA validate, verify-email) are blocked on org subdomains via `baseOnlyMiddleware`. Auth flows must happen on the base domain only. Cookies are set with `Domain=.baseDomain` for cross-subdomain sharing. The UI redirects users from subdomain auth pages to the base domain with a `?return_to=` param.
@@ -67,7 +67,7 @@ Migrations are versioned and tracked in `common.schema_migrations`.
 - **Storage:** bcrypt (cost 12) hash in `org_<uuid>.api_tokens`. Plaintext shown once, never stored.
 - **Lookup:** Tokens are found by prefix (`aegis_` + 8 hex = 14 chars), then verified via bcrypt.
 - **Scope:** Tokens are per-org, optionally scoped to a single project.
-- **Middleware chain (agents):** `TokenAuth(bearer + subdomain/header → org → prefix lookup → bcrypt verify) → Handler`
+- **Middleware chain (agents):** `TokenAuth(bearer + subdomain/custom domain → org → prefix lookup → bcrypt verify) → Handler`
 - **Context:** Use `middleware.AgentTokenFromContext(ctx)` to get the authenticated token.
 
 ### Feature Flags (IMPORTANT)
@@ -166,7 +166,7 @@ Each org tracks a `schema_version` in `common.organizations`. This allows:
 - **Framework:** Vite + React + TypeScript
 - **Component library:** shadcn/ui (in `components/ui/`)
 - **Styling:** Tailwind CSS
-- **API calls:** Always use the `request()` helper from `lib/api.ts` — it auto-injects `X-Org-ID` and `credentials: "include"`.
+- **API calls:** Always use the `request()` helper from `lib/api.ts` — it auto-injects `credentials: "include"` for cookie-based auth.
 - **Auth state:** Use `useAuth()` hook from `lib/auth-context.tsx`.
 - **Org state:** Use `useOrg()` hook from `lib/org-context.tsx`.
 - **Pages:** One file per page in `pages/`. Keep pages focused on data fetching + layout.
@@ -235,8 +235,8 @@ ci: add Docker build verification to CI
 2. **Public (base domain only)** — no auth required, but blocked on org subdomains when `AEGIS_BASE_DOMAIN` is set: `/api/v1/auth/register`, `/api/v1/auth/login`, `/api/v1/auth/logout`, `/api/v1/auth/forgot-password`, `/api/v1/auth/reset-password`, `/api/v1/auth/mfa/validate`, `/api/v1/auth/verify-email`
 3. **Public (any domain)** — no auth, works everywhere: `/api/v1/config/auth`, `/api/v1/docs`, `/api/v1/docs/openapi.yaml`
 4. **Authenticated** — JWT cookie required: `/api/v1/auth/me`, `/api/v1/orgs`, `/api/v1/config/features`
-5. **Protected** — JWT + org context (subdomain/X-Org-ID + membership verified): findings, projects, members, tokens, dashboard
-6. **Agent** — Bearer token (org resolved from subdomain/header, no membership check): `/api/v1/agent/*`
+5. **Protected** — JWT + org context (subdomain/custom domain + membership verified): findings, projects, members, tokens, dashboard
+6. **Agent** — Bearer token (org resolved from subdomain/custom domain, no membership check): `/api/v1/agent/*`
 
 ### Request/Response
 
@@ -282,10 +282,11 @@ Error codes are defined in `errors.yaml` (project root) and generated as Go cons
 
 ### Org Context
 
-Org-scoped requests must include one of:
-- **Subdomain** (production): `acme.aegis.io` → slug `acme` (when `AEGIS_BASE_DOMAIN` is set)
+Org-scoped requests are resolved from the request's `Host` header:
+- **Subdomain**: `acme.aegis.io` → slug `acme`
 - **Custom domain**: `security.acme.com` → looked up in `common.organizations.custom_domain`
-- `X-Org-ID: <uuid>` header
+
+`AEGIS_BASE_DOMAIN` defaults to `lvh.me` for local development (`*.lvh.me` resolves to `127.0.0.1`).
 
 The `TenantResolver` middleware (for users) or `TokenAuth` middleware (for agents) resolves this to an org, creates a schema-scoped store, and injects both into the request context.
 
@@ -416,20 +417,18 @@ curl -c cookies.txt -X POST http://lvh.me:8080/api/v1/auth/login \
 # Authenticated request
 curl -b cookies.txt http://lvh.me:8080/api/v1/auth/me
 
-# Org-scoped request (use org UUID from /api/v1/orgs response)
-curl -b cookies.txt http://lvh.me:8080/api/v1/findings -H "X-Org-ID: <org-uuid>"
+# Org-scoped request (use org slug from /api/v1/orgs response)
+curl -b cookies.txt http://<org-slug>.lvh.me:8080/api/v1/findings
 
 # Create an API token
-curl -b cookies.txt -X POST http://lvh.me:8080/api/v1/tokens \
+curl -b cookies.txt -X POST http://<org-slug>.lvh.me:8080/api/v1/tokens \
   -H "Content-Type: application/json" \
-  -H "X-Org-ID: <org-uuid>" \
   -d '{"name":"CI Token","expires_in":90}'
 # Save the "result.token" field from the response!
 
 # Agent: push a finding (Bearer token)
-curl -X POST http://lvh.me:8080/api/v1/agent/findings \
+curl -X POST http://<org-slug>.lvh.me:8080/api/v1/agent/findings \
   -H "Authorization: Bearer aegis_a1b2c3d4..." \
-  -H "X-Org-ID: <org-uuid>" \
   -H "Content-Type: application/json" \
   -d '{"project_id":"uuid","fingerprint":"sha256:abc","title":"XSS","severity":"high","description":"..."}'
 ```

@@ -32,7 +32,6 @@ export type ErrorCode =
   | "not_member"
   | "slug_taken"
   | "slug_reserved"
-  | "header_conflict"
   // resource_error
   | "conflict"
   | "already_exists"
@@ -83,7 +82,6 @@ export const ERROR_CODES: Record<string, ErrorEntry> = {
   "tenant_error.not_member": { type: "tenant_error", code: "not_member", ref: "E30002", status: 403, message: "You are not a member of this organization" },
   "tenant_error.slug_taken": { type: "tenant_error", code: "slug_taken", ref: "E30003", status: 409, message: "Organization slug is already taken" },
   "tenant_error.slug_reserved": { type: "tenant_error", code: "slug_reserved", ref: "E30004", status: 409, message: "Organization slug is reserved" },
-  "tenant_error.header_conflict": { type: "tenant_error", code: "header_conflict", ref: "E30005", status: 400, message: "Org header conflicts with subdomain" },
 
   // resource_error
   "resource_error.not_found": { type: "resource_error", code: "not_found", ref: "E40001", status: 404, message: "Resource not found" },
