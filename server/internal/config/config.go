@@ -27,7 +27,7 @@ type Config struct {
 
 	// BaseDomain is the base domain for subdomain-based org resolution.
 	// e.g., "aegis.io" means orgs are accessed via acme.aegis.io.
-	// Empty = no subdomain resolution (use X-Org-Slug header instead).
+	// Empty = no subdomain resolution (use X-Org-ID header instead).
 	BaseDomain string
 
 	// AllowedOrigins for CORS. Default: http://lvh.me:8080 (Docker dev).

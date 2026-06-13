@@ -9,9 +9,10 @@ info:
     set by the login or register endpoints.
 
     ## Multi-Tenancy
-    Org-scoped endpoints require an `X-Org-ID` or `X-Org-Slug` header to identify
-    which organization's data to access. The server verifies the user's membership
-    in that org before processing the request.
+    Org-scoped endpoints require an `X-Org-ID` header (UUID) to identify
+    which organization's data to access. When `AEGIS_BASE_DOMAIN` is set,
+    the org is resolved from the subdomain instead. The server verifies
+    the user's membership in that org before processing the request.
   version: 0.1.0
   contact:
     name: Pixelvide
@@ -693,12 +694,13 @@ components:
 
   parameters:
     OrgHeader:
-      name: X-Org-Slug
+      name: X-Org-ID
       in: header
       required: true
       schema:
         type: string
-      description: Organization slug (or use X-Org-ID with the org UUID)
+        format: uuid
+      description: Organization UUID (not needed when using org subdomains)
     IdPath:
       name: id
       in: path

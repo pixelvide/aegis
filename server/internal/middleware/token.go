@@ -31,7 +31,7 @@ func AgentTokenFromContext(ctx context.Context) *models.APIToken {
 //
 // Flow:
 //  1. Extract "Bearer aegis_xxx" from Authorization header
-//  2. Resolve org from subdomain (Host header) or X-Org-Slug fallback
+//  2. Resolve org from subdomain (Host header) or X-Org-ID fallback
 //  3. Load tenant store for that org
 //  4. Look up token by prefix in org's api_tokens table
 //  5. Verify full token against stored bcrypt hash
@@ -96,24 +96,18 @@ func TokenAuth(common *store.CommonStore, cfg *config.Config) func(http.Handler)
 				}
 			}
 
-			// If domain resolved the org, reject conflicting headers
+			// If domain resolved the org, reject conflicting X-Org-ID header
 			if resolvedFromDomain && org != nil {
 				if headerID := r.Header.Get("X-Org-ID"); headerID != "" && headerID != org.ID {
 					writeMiddlewareError(w, r, errTenantHeaderConflictID)
 					return
 				}
-				if headerSlug := r.Header.Get("X-Org-Slug"); headerSlug != "" && headerSlug != org.Slug {
-					writeMiddlewareError(w, r, errTenantHeaderConflictSlug)
-					return
-				}
 			}
 
-			// Fallback to X-Org-Slug or X-Org-ID headers (dev mode)
+			// Fallback to X-Org-ID header (dev mode)
 			if org == nil && err == nil {
 				if orgID := r.Header.Get("X-Org-ID"); orgID != "" {
 					org, err = common.GetOrganization(r.Context(), orgID)
-				} else if slug := r.Header.Get("X-Org-Slug"); slug != "" {
-					org, err = common.GetOrgBySlug(r.Context(), slug)
 				}
 			}
 

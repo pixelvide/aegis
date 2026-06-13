@@ -53,10 +53,9 @@ func IsAdminOrOwner(ctx context.Context) bool {
 //  1. Subdomain (if AEGIS_BASE_DOMAIN is set): acme.aegis.io → slug "acme"
 //  2. Custom domain: security.acme.com → lookup in organizations.custom_domain
 //  3. X-Org-ID header (UUID)
-//  4. X-Org-Slug header (slug)
 //
-// When AEGIS_BASE_DOMAIN is set and a subdomain is present, headers are ignored
-// to prevent confused-deputy attacks (user on acme.aegis.io sending X-Org-Slug: other-org).
+// When AEGIS_BASE_DOMAIN is set and a subdomain is present, the X-Org-ID header
+// is ignored to prevent confused-deputy attacks.
 //
 // If an authenticated user is in context, verifies org membership.
 func TenantResolver(common *store.CommonStore, cfg *config.Config) func(http.Handler) http.Handler {
@@ -93,24 +92,18 @@ func TenantResolver(common *store.CommonStore, cfg *config.Config) func(http.Han
 				}
 			}
 
-			// 3. If domain resolved the org, reject conflicting headers
+			// 3. If domain resolved the org, reject conflicting X-Org-ID header
 			if resolvedFromDomain && org != nil {
 				if headerID := r.Header.Get("X-Org-ID"); headerID != "" && headerID != org.ID {
 					writeMiddlewareError(w, r, errTenantHeaderConflictID)
 					return
 				}
-				if headerSlug := r.Header.Get("X-Org-Slug"); headerSlug != "" && headerSlug != org.Slug {
-					writeMiddlewareError(w, r, errTenantHeaderConflictSlug)
-					return
-				}
 			}
 
-			// 4. Fallback to headers (dev mode, no subdomain)
+			// 4. Fallback to X-Org-ID header (dev mode, no subdomain)
 			if org == nil && err == nil {
 				if orgID := r.Header.Get("X-Org-ID"); orgID != "" {
 					org, err = common.GetOrganization(r.Context(), orgID)
-				} else if slug := r.Header.Get("X-Org-Slug"); slug != "" {
-					org, err = common.GetOrgBySlug(r.Context(), slug)
 				}
 			}
 
