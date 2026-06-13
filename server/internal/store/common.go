@@ -320,6 +320,24 @@ var migrations = []migration{
 		END $$;
 		`,
 	},
+	{
+		Version:     12,
+		Description: "Seed require_mfa org feature flag for all org schemas",
+		SQL: `
+		DO $$
+		DECLARE s TEXT;
+		BEGIN
+		  FOR s IN SELECT schema_name FROM information_schema.schemata WHERE schema_name LIKE 'org_%'
+		  LOOP
+		    EXECUTE format('
+		      INSERT INTO %I.org_feature_flags (name, provisioned, enabled, description)
+		      VALUES (''require_mfa'', TRUE, FALSE, ''Require all users to enable MFA before accessing this organization'')
+		      ON CONFLICT (name) DO NOTHING
+		    ', s);
+		  END LOOP;
+		END $$;
+		`,
+	},
 }
 
 func (cs *CommonStore) migrate() error {
@@ -729,6 +747,10 @@ func (cs *CommonStore) ProvisionOrgSchema(ctx context.Context, schemaName string
 
 	INSERT INTO %[1]s.org_feature_flags (name, provisioned, enabled, description)
 	VALUES ('org_wide_tokens', FALSE, FALSE, 'Allow creating org-wide API tokens that access all projects')
+	ON CONFLICT (name) DO NOTHING;
+
+	INSERT INTO %[1]s.org_feature_flags (name, provisioned, enabled, description)
+	VALUES ('require_mfa', TRUE, FALSE, 'Require all users to enable MFA before accessing this organization')
 	ON CONFLICT (name) DO NOTHING;
 	`, schemaName)
 

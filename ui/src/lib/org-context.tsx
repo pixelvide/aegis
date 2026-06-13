@@ -1,6 +1,6 @@
 import { createContext, useContext, useState, useEffect, useCallback } from "react"
 import type { Organization } from "@/lib/types"
-import { orgsApi, setCurrentOrg } from "@/lib/api"
+import { orgsApi, setCurrentOrg, request, ApiError } from "@/lib/api"
 
 interface OrgContextValue {
   orgs: Organization[]
@@ -10,6 +10,7 @@ interface OrgContextValue {
   refresh: () => void
   baseDomain: string
   accessDenied: boolean
+  mfaRequired: boolean
 }
 
 const OrgContext = createContext<OrgContextValue>({
@@ -20,6 +21,7 @@ const OrgContext = createContext<OrgContextValue>({
   refresh: () => {},
   baseDomain: "",
   accessDenied: false,
+  mfaRequired: false,
 })
 
 export function useOrg() {
@@ -34,6 +36,7 @@ export function OrgProvider({ children }: { children: React.ReactNode }) {
   const [loading, setLoading] = useState(true)
   const [baseDomain, setBaseDomain] = useState("")
   const [accessDenied, setAccessDenied] = useState(false)
+  const [mfaRequired, setMfaRequired] = useState(false)
 
   const selectOrg = useCallback((orgList: Organization[], domain: string) => {
     let selected: Organization | null = null
@@ -70,7 +73,19 @@ export function OrgProvider({ children }: { children: React.ReactNode }) {
     }
 
     setAccessDenied(false)
+    setMfaRequired(false)
     setBaseDomain(domain)
+
+    // Probe for require_mfa enforcement: make a lightweight org-scoped call.
+    // If the org has require_mfa enabled and the user hasn't set up MFA,
+    // the server returns 403 with mfa_required_by_org error code.
+    if (selected && onSubdomain) {
+      request<unknown>("/projects").catch((err: unknown) => {
+        if (err instanceof ApiError && err.is("mfa_required_by_org" as never)) {
+          setMfaRequired(true)
+        }
+      })
+    }
   }, [])
 
   const loadOrgs = useCallback(() => {
@@ -119,7 +134,7 @@ export function OrgProvider({ children }: { children: React.ReactNode }) {
   }, [baseDomain])
 
   return (
-    <OrgContext.Provider value={{ orgs, currentOrg, switchOrg, loading, refresh: loadOrgs, baseDomain, accessDenied }}>
+    <OrgContext.Provider value={{ orgs, currentOrg, switchOrg, loading, refresh: loadOrgs, baseDomain, accessDenied, mfaRequired }}>
       {children}
     </OrgContext.Provider>
   )

@@ -735,6 +735,31 @@ When `AEGIS_BASE_DOMAIN` is not set, `base_domain` is an empty string.
 
 ---
 
+## MFA Enforcement (Org-Scoped Endpoints)
+
+When an org admin enables the `require_mfa` org-level feature flag, all org-scoped endpoints (Scans, Findings, Projects, Members, Tokens, Dashboard, Org Features) will return **403** for users who haven't set up MFA:
+
+```json
+{
+  "success": false,
+  "request_id": "req_...",
+  "errors": [
+    {
+      "type": "permission_error",
+      "code": "mfa_required_by_org",
+      "ref": "E60003",
+      "message": "This organization requires MFA to be enabled"
+    }
+  ]
+}
+```
+
+**Scope:** This check runs in the `TenantResolver` middleware, which handles all user-authenticated org-scoped requests. Agent (Bearer token) requests are **not affected** — they use the `TokenAuth` middleware instead.
+
+**Resolution:** The user must set up MFA via their profile page (`/profile/access-management/authentication`), which is on the base domain and not org-scoped.
+
+---
+
 ## Scans 🔒🏢 (Read-Only)
 
 Requires org context (org subdomain or custom domain).

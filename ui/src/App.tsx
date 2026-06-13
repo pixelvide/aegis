@@ -9,6 +9,7 @@ import { Toaster } from "sonner"
 
 import { AppSidebar } from "@/components/app-sidebar"
 import { BaseDomainSidebar } from "@/components/base-domain-sidebar"
+import { MfaRequiredPage } from "@/components/mfa-required-page"
 import { AuthProvider, useAuth } from "@/lib/auth-context"
 import { OrgProvider, useOrg } from "@/lib/org-context"
 import { ProjectProvider } from "@/lib/project-context"
@@ -182,7 +183,7 @@ function BaseDomainLayout() {
 // Wraps org workspace content. If the user doesn't have access to the
 // subdomain org, shows an access denied page instead of the workspace.
 function OrgAccessGuard({ children }: { children: React.ReactNode }) {
-  const { accessDenied, loading, baseDomain } = useOrg()
+  const { accessDenied, mfaRequired, loading, baseDomain } = useOrg()
 
   if (loading) {
     return (
@@ -216,6 +217,10 @@ function OrgAccessGuard({ children }: { children: React.ReactNode }) {
         </div>
       </div>
     )
+  }
+
+  if (mfaRequired) {
+    return <MfaRequiredPage baseDomain={baseDomain} />
   }
 
   return <>{children}</>

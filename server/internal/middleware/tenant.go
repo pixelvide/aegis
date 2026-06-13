@@ -111,6 +111,13 @@ func TenantResolver(common *store.CommonStore, cfg *config.Config) func(http.Han
 			// Create a tenant-scoped store for this org
 			tenantStore := store.NewTenantStore(common.DB(), org.SchemaName())
 
+			// Enforce require_mfa: if org requires MFA and user hasn't enabled it, block access.
+			// This only applies to user (cookie-auth) requests — agent tokens use TokenAuth middleware.
+			if user != nil && tenantStore.IsOrgFeatureActive(r.Context(), "require_mfa") && !user.MFAEnabled {
+				writeMiddlewareError(w, r, errMFARequiredByOrg)
+				return
+			}
+
 			// Inject org + store + role into context
 			ctx := context.WithValue(r.Context(), OrgContextKey, org)
 			ctx = context.WithValue(ctx, TenantStoreKey, tenantStore)

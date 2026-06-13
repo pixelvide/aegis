@@ -104,6 +104,7 @@ This is validated by regex `^org_[a-f0-9]{32}$` to prevent SQL injection.
    │  ├─ Load org from DB
    │  ├─ Verify user is a member of the org
    │  ├─ Create schema-scoped Store
+   │  ├─ Check require_mfa: if org flag enabled + user has no MFA → 403
    │  └─ Inject org + store into context
    │
 6. Handler: business logic + response
@@ -198,6 +199,7 @@ Each org's data is fully isolated at the database level:
 |---|---|
 | Query isolation | Schema-qualified table names (`org_xxx.scans`) |
 | Membership check | `TenantResolver` verifies user ∈ org before granting access |
+| MFA enforcement | `TenantResolver` checks `require_mfa` org flag — blocks users without MFA (403 E60003) |
 | Schema provisioning | `ProvisionOrgSchema()` creates tables in a new schema |
 | Data deletion | `DROP SCHEMA org_xxx CASCADE` removes everything |
 | Schema naming | UUID-derived, regex-validated (prevents SQL injection) |

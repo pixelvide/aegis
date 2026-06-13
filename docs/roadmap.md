@@ -171,14 +171,16 @@ Exploitable security gaps that must be fixed before onboarding users. A security
   - User-facing error: "Too many failed attempts. Please log in again."
 
 ### `require_mfa` Enforcement Fix
-- **Status:** Not started (was incorrectly marked as completed)
+- **Status:** ✅ Completed (2026-06-13)
 - **Priority:** 🔴 Critical
-- **Description:** The `require_mfa` org-level feature flag is documented as enforced in TenantResolver middleware, but the check does not exist. Also, the flag is not seeded in `ProvisionOrgSchema()`.
-- **Changes needed:**
-  - Add `require_mfa` check in TenantResolver middleware: if flag is enabled and user has `mfa_enabled = false`, return 403
-  - Seed `require_mfa` flag in `ProvisionOrgSchema()` (default: disabled)
-  - Add migration to seed `require_mfa` for existing orgs
-  - Return structured error: `errPermissionMFARequiredByOrg` (E60003)
+- **Description:** The `require_mfa` org-level feature flag is now enforced in TenantResolver middleware. When enabled, users without MFA are blocked from all org-scoped endpoints with 403 (E60003).
+- **Implemented:**
+  - `require_mfa` flag seeded in `ProvisionOrgSchema()` (provisioned=TRUE, enabled=FALSE)
+  - Migration 12 seeds the flag for all existing org schemas
+  - TenantResolver middleware checks `require_mfa` flag + `user.MFAEnabled` — returns 403 `mfa_required_by_org` if enforcement is on and user has no MFA
+  - Agent (Bearer token) requests are NOT affected — they use `TokenAuth` middleware
+  - UI: `OrgProvider` detects `mfa_required_by_org` error and shows full-page interstitial with "Set Up MFA" button redirecting to base domain profile
+  - Error code `errMFARequiredByOrg` (E60003) already existed in middleware and API error constants
 
 ### Token Refresh Rotation
 - **Status:** Not started
@@ -844,3 +846,4 @@ Fill in the sidebar sections that exist as navigation items but have no implemen
 | Request trace IDs (`req_<hex>` on every request, in logs + headers + response bodies) | 2026-06-12 |
 | Full handler migration (~250 call sites from legacy to new envelope/error format) | 2026-06-12 |
 | MFA Enforcement (`require_mfa` org flag — partial: data model + UI done) | 2026-06-11 |
+| `require_mfa` enforcement in TenantResolver middleware + MFA interstitial UI | 2026-06-13 |
