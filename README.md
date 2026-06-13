@@ -76,10 +76,10 @@ docker compose up --build -d
 # This works — subdomain matches
 curl -b cookies.txt http://test.lvh.me:8080/api/v1/findings
 
-# This is REJECTED (400) — subdomain says "test" but header says "acme"
+# This is REJECTED (400) — subdomain says "test" but header says a different org ID
 curl -b cookies.txt http://test.lvh.me:8080/api/v1/findings \
-  -H "X-Org-Slug: acme"
-# → {"error":"X-Org-Slug header conflicts with subdomain"}
+  -H "X-Org-ID: 00000000-0000-0000-0000-000000000000"
+# → {"error":"X-Org-ID header conflicts with subdomain"}
 ```
 
 > **Production:** Set `AEGIS_BASE_DOMAIN=aegis.io` (or your domain). Configure DNS with a wildcard `*.aegis.io → your-server-ip`.
@@ -100,7 +100,7 @@ curl -b cookies.txt http://test.lvh.me:8080/api/v1/findings \
 │  ┌──────────┐  ┌──────────────┐  ┌──────────────────────────┐  │
 │  │ Auth MW  │→ │ Tenant MW    │→ │ Handlers                 │  │
 │  │ (JWT     │  │ (subdomain / │  │ findings, exploits,      │  │
-│  │  cookie) │  │  X-Org-Slug) │  │ orgs, projects, members  │  │
+│  │  cookie) │  │  X-Org-ID)   │  │ orgs, projects, members  │  │
 │  └──────────┘  └──────────────┘  └──────────────────────────┘  │
 │  ┌──────────┐  ┌──────────────────────────────────────────────┐ │
 │  │ Token MW │→ │ Agent Ingest API (Bearer token auth)         │ │
@@ -311,7 +311,7 @@ All configuration is via environment variables:
 | GET | `/api/v1/tokens` | List tokens (prefix + metadata) |
 | DELETE | `/api/v1/tokens/{id}` | Revoke token |
 
-Org-scoped endpoints require an `X-Org-ID` or `X-Org-Slug` header (or subdomain when `AEGIS_BASE_DOMAIN` is set).
+Org-scoped endpoints require an `X-Org-ID` header (or subdomain when `AEGIS_BASE_DOMAIN` is set).
 
 Agent endpoints use `Authorization: Bearer aegis_xxx` tokens instead of cookies.
 

@@ -17,7 +17,7 @@ Aegis is a multi-tenant security scanning platform. It follows the **BFF (Backen
                   │  │ Auth Middleware │  │  ← JWT cookie → User
                   │  └───────┬────────┘  │
                   │  ┌───────▼────────┐  │
-                  │  │ Tenant MW      │  │  ← Subdomain/X-Org-Slug → Schema
+                  │  │ Tenant MW      │  │  ← Subdomain/X-Org-ID → Schema
                   │  └───────┬────────┘  │
                   │  ┌───────▼────────┐  │
                   │  │ API Handlers   │  │  ← findings, exploits, members,
@@ -101,8 +101,8 @@ This is validated by regex `^org_[a-f0-9]{32}$` to prevent SQL injection.
 5. Tenant Middleware (for org-scoped routes):
    │  ├─ Try subdomain from Host header (production, if AEGIS_BASE_DOMAIN set)
    │  ├─ Try custom domain lookup (if host ≠ base domain)
-   │  ├─ Reject if X-Org-* header conflicts with subdomain (400)
-   │  ├─ Fallback: X-Org-ID / X-Org-Slug header (dev mode)
+   │  ├─ Reject if X-Org-ID header conflicts with subdomain (400)
+   │  ├─ Fallback: X-Org-ID header (dev mode)
    │  ├─ Load org from DB
    │  ├─ Verify user is a member of the org
    │  ├─ Create schema-scoped Store
@@ -118,7 +118,7 @@ This is validated by regex `^org_[a-f0-9]{32}$` to prevent SQL injection.
    │
 2. Token Auth Middleware:
    │  ├─ Extract Bearer token from header
-   │  ├─ Resolve org from subdomain or X-Org-Slug
+   │  ├─ Resolve org from subdomain or X-Org-ID
    │  ├─ Look up token by prefix in org's api_tokens table
    │  ├─ Verify token against bcrypt hash
    │  ├─ Check: not revoked, not expired
@@ -215,7 +215,7 @@ Each org's data is fully isolated at the database level:
 | Database | PostgreSQL 16 |
 | Auth (Users) | bcrypt (cost 12), JWT (HS256, golang-jwt/v5) |
 | Auth (Agents) | Bearer tokens, bcrypt-hashed, per-org schema |
-| Org Resolution | Subdomain (`acme.aegis.io`) or `X-Org-Slug` header |
+| Org Resolution | Subdomain (`acme.aegis.io`) or `X-Org-ID` header |
 | Logging | `log/slog` (Go stdlib), configurable level/format via `LOG_LEVEL`/`LOG_FORMAT` |
 | Observability | OpenTelemetry metrics, Prometheus exporter (`/metrics`) |
 | Deployment | Docker, Docker Compose |

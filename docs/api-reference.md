@@ -6,11 +6,11 @@ Base URL: `http://lvh.me:8080/api/v1` (development) or `https://your-domain.com/
 
 ### User Auth (Cookie)
 All authenticated endpoints require the `aegis_token` cookie (set by login/register).  
-Org-scoped endpoints additionally require `X-Org-ID` or `X-Org-Slug` header (or org subdomain when `AEGIS_BASE_DOMAIN` is set).
+Org-scoped endpoints additionally require an `X-Org-ID` header (or org subdomain when `AEGIS_BASE_DOMAIN` is set).
 
 ### Agent Auth (Bearer Token)
 Agent Ingest API endpoints use `Authorization: Bearer aegis_xxx` tokens instead of cookies.  
-Org context is resolved from subdomain or `X-Org-Slug` header.
+Org context is resolved from subdomain or `X-Org-ID` header.
 
 ---
 
@@ -737,7 +737,7 @@ When `AEGIS_BASE_DOMAIN` is not set, `base_domain` is an empty string.
 
 ## Scans 🔒🏢 (Read-Only)
 
-Requires org context (`X-Org-ID` or `X-Org-Slug` header).
+Requires org context (`X-Org-ID` header or subdomain).
 
 > **Note:** Scans are legacy data. New findings are pushed via the Agent Ingest API.
 
@@ -937,7 +937,7 @@ These endpoints use Bearer token authentication instead of cookies. Agents push 
 
 All agent endpoints require:
 - `Authorization: Bearer aegis_xxx` header
-- Org context via subdomain (`acme.aegis.io`) or `X-Org-Slug` header
+- Org context via subdomain (`acme.aegis.io`) or `X-Org-ID` header
 
 ### POST `/agent/findings`
 
@@ -1244,5 +1244,5 @@ Raw OpenAPI 3.0.3 specification in YAML format.
 ## Legend
 
 - 🔒 — Requires authentication (`aegis_token` cookie)
-- 🏢 — Requires org context (`X-Org-ID`, `X-Org-Slug`, or subdomain)
+- 🏢 — Requires org context (`X-Org-ID` header or subdomain)
 - 🔑 — Requires agent token (`Authorization: Bearer aegis_xxx`)
