@@ -1,0 +1,38 @@
+# Layer 1: Extracted from sharingan_vuln_patterns — SQL Injection patterns
+- id: sqli-string-concat
+  source: sharingan-prompt-v1
+  layer: 1
+  languages: [php, python, javascript, go, java, ruby, csharp]
+  description: "SQL injection via string concatenation in query construction"
+  dangerous_sinks:
+    - "->whereRaw("
+    - "->selectRaw("
+    - "DB::raw("
+    - "db.query("
+    - "db.execute("
+    - "cursor.execute("
+    - "sprintf(\"SELECT"
+    - "\"SELECT * FROM \" +"
+    - "f\"SELECT"
+  safe_alternatives:
+    - "->where("
+    - "prepared statement with $1/$2"
+    - "parameterized query with ?"
+  false_positive_signals:
+    - "ORM parameterized query"
+    - "prepared statement"
+    - "constant query string"
+  cwe: CWE-89
+  severity: critical
+
+- id: sqli-stored-procedure
+  source: sharingan-prompt-v1
+  layer: 1
+  languages: [php, python, javascript, java, csharp]
+  description: "SQL injection via unsanitized input passed to stored procedures"
+  dangerous_sinks:
+    - "CALL "
+    - "EXEC "
+    - "sp_executesql"
+  cwe: CWE-89
+  severity: high

@@ -322,6 +322,14 @@ func (r *Reporter) pushToServer(ctx context.Context, finding LocalFinding) error
 			log.Printf("  Attempt %d/%d failed: %v", attempt+1, maxRetries, err)
 			continue
 		}
+
+		// Read body for error diagnosis
+		var respBody []byte
+		if resp.StatusCode >= 400 {
+			respBody = make([]byte, 2048)
+			n, _ := resp.Body.Read(respBody)
+			respBody = respBody[:n]
+		}
 		resp.Body.Close()
 
 		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
@@ -330,7 +338,7 @@ func (r *Reporter) pushToServer(ctx context.Context, finding LocalFinding) error
 
 		// Don't retry on client errors (4xx) except 429 (rate limit)
 		if resp.StatusCode >= 400 && resp.StatusCode < 500 && resp.StatusCode != 429 {
-			return fmt.Errorf("server returned %d (not retrying)", resp.StatusCode)
+			return fmt.Errorf("server returned %d (not retrying): %s", resp.StatusCode, string(respBody))
 		}
 
 		log.Printf("  Attempt %d/%d: server returned %d", attempt+1, maxRetries, resp.StatusCode)

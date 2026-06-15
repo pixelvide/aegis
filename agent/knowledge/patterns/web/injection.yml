@@ -1,0 +1,92 @@
+# Layer 1: Extracted from sharingan_vuln_patterns — Command Injection
+- id: cmdi-exec
+  source: sharingan-prompt-v1
+  layer: 1
+  languages: [php, python, javascript, ruby, go]
+  description: "OS command injection via user input passed to exec/system/shell"
+  dangerous_sinks:
+    - "exec("
+    - "system("
+    - "shell_exec("
+    - "popen("
+    - "passthru("
+    - "os.system("
+    - "subprocess.call("
+    - "subprocess.run("
+    - "child_process.exec("
+    - "os/exec.Command("
+  safe_alternatives:
+    - "subprocess.run(args_list, shell=False)"
+    - "execFile (not exec)"
+    - "allow-list validated arguments"
+  false_positive_signals:
+    - "hardcoded command string"
+    - "no user input in command"
+  cwe: CWE-78
+  severity: critical
+
+# Layer 1: XSS
+- id: xss-reflected
+  source: sharingan-prompt-v1
+  layer: 1
+  languages: [php, javascript, python, ruby, java]
+  description: "Cross-site scripting via user input rendered in HTML without encoding"
+  dangerous_sinks:
+    - "echo $_GET"
+    - "echo $_POST"
+    - "echo $_REQUEST"
+    - "innerHTML ="
+    - "document.write("
+    - "v-html="
+    - "dangerouslySetInnerHTML"
+    - "|safe"
+    - "mark_safe("
+    - "Markup("
+  safe_alternatives:
+    - "htmlspecialchars("
+    - "textContent ="
+    - "DOMPurify.sanitize("
+    - "React JSX auto-escaping"
+  cwe: CWE-79
+  severity: high
+
+# Layer 1: Path Traversal
+- id: path-traversal
+  source: sharingan-prompt-v1
+  layer: 1
+  languages: [php, python, javascript, go, java, ruby]
+  description: "Path traversal via user input in file operations"
+  dangerous_sinks:
+    - "file_get_contents($"
+    - "include($"
+    - "require($"
+    - "fopen($"
+    - "open(user_input"
+    - "fs.readFile(req."
+    - "os.ReadFile(r."
+    - "path.join(base, req."
+  safe_alternatives:
+    - "filepath.Clean + startsWith check"
+    - "path.basename()"
+    - "realpath() + prefix validation"
+  trigger_conditions:
+    - "User-controlled filename or path component"
+    - "No validation of ../ sequences"
+    - "No directory boundary check after path resolution"
+  cwe: CWE-22
+  severity: high
+
+# Layer 1: Template Injection
+- id: ssti
+  source: sharingan-prompt-v1
+  layer: 1
+  languages: [python, javascript, php, java, ruby]
+  description: "Server-side template injection via user input in template engine"
+  dangerous_sinks:
+    - "render_template_string("
+    - "Template(user_input)"
+    - "Twig::createTemplate("
+    - "nunjucks.renderString("
+    - "eval(template"
+  cwe: CWE-1336
+  severity: critical

@@ -1,0 +1,133 @@
+# Layer 2: CWE Top-25 gap fill — Buffer overflow and memory corruption patterns
+# These cover the FreeBSD/OpenBSD/FFmpeg class of bugs that Mythos found.
+
+- id: stack-overflow-memcpy
+  source: cwe-top25-v1
+  layer: 2
+  languages: [c, cpp]
+  description: "Stack buffer overflow via memcpy/memmove from network-controlled length"
+  dangerous_sinks:
+    - "memcpy(buf, src, len)"
+    - "memcpy("
+    - "memmove("
+    - "bcopy("
+  trigger_conditions:
+    - "Length field from untrusted network input (XDR, RPC, TLS, HTTP)"
+    - "Fixed-size stack buffer as destination"
+    - "No bounds check between source length and buffer size"
+  false_positive_signals:
+    - "Length validated before copy"
+    - "Dynamic allocation sized to input"
+  real_world_examples:
+    - "FreeBSD CVE-2026-4747: oa_length up to MAX_AUTH_BYTES(400) into 128-byte stack buf"
+  cwe: CWE-120
+  severity: critical
+
+- id: stack-overflow-strcpy
+  source: cwe-top25-v1
+  layer: 2
+  languages: [c, cpp]
+  description: "Stack buffer overflow via strcpy/strcat without length check"
+  dangerous_sinks:
+    - "strcpy("
+    - "strcat("
+    - "sprintf("
+    - "gets("
+  safe_alternatives:
+    - "strncpy("
+    - "strlcpy("
+    - "snprintf("
+    - "fgets("
+  cwe: CWE-120
+  severity: critical
+
+- id: heap-overflow
+  source: cwe-top25-v1
+  layer: 2
+  languages: [c, cpp]
+  description: "Heap buffer overflow via incorrect allocation size or missing bounds check"
+  indicators:
+    - "malloc("
+    - "calloc("
+    - "realloc("
+  trigger_conditions:
+    - "Allocation size computed from attacker-controlled input"
+    - "Integer overflow in size calculation"
+    - "Write beyond allocated region"
+  cwe: CWE-122
+  severity: critical
+
+- id: use-after-free
+  source: cwe-top25-v1
+  layer: 2
+  languages: [c, cpp]
+  description: "Use-after-free via dangling pointer after free()"
+  indicators:
+    - "free("
+    - "delete "
+  trigger_conditions:
+    - "Pointer used after free() without NULL assignment"
+    - "Object reference held across free boundary"
+    - "Callback invoked on freed object"
+    - "Race condition between free and use in concurrent code"
+  cwe: CWE-416
+  severity: critical
+
+- id: integer-overflow
+  source: cwe-top25-v1
+  layer: 2
+  languages: [c, cpp, java, go]
+  description: "Integer overflow leading to incorrect allocation size or bounds check bypass"
+  indicators:
+    - "size_t"
+    - "uint32_t"
+    - "int "
+  trigger_conditions:
+    - "Arithmetic on attacker-controlled integer without overflow check"
+    - "Multiplication used to compute buffer size (n * sizeof)"
+    - "Addition wrapping past MAX_INT"
+    - "Signed/unsigned comparison mismatch"
+  cwe: CWE-190
+  severity: high
+
+- id: format-string
+  source: cwe-top25-v1
+  layer: 2
+  languages: [c, cpp]
+  description: "Format string vulnerability via user input in printf-family functions"
+  dangerous_sinks:
+    - "printf(user_input)"
+    - "fprintf(f, user_input)"
+    - "sprintf(buf, user_input)"
+    - "syslog(priority, user_input)"
+  safe_alternatives:
+    - "printf(\"%s\", user_input)"
+  cwe: CWE-134
+  severity: critical
+
+- id: double-free
+  source: cwe-top25-v1
+  layer: 2
+  languages: [c, cpp]
+  description: "Double-free via calling free() on the same pointer twice"
+  indicators:
+    - "free("
+    - "delete "
+  trigger_conditions:
+    - "Error handling path frees memory already freed in normal path"
+    - "Missing NULL assignment after free"
+    - "Destructor called multiple times"
+  cwe: CWE-415
+  severity: high
+
+- id: null-deref
+  source: cwe-top25-v1
+  layer: 2
+  languages: [c, cpp, go, java]
+  description: "NULL pointer dereference leading to crash or exploitable condition"
+  trigger_conditions:
+    - "Function return value not checked for NULL before use"
+    - "Error path continues with NULL pointer"
+    - "Optional field accessed without nil check"
+  cwe: CWE-476
+  severity: medium

@@ -31,6 +31,12 @@ type Persona interface {
 	// JournalFile returns the filename for this persona's journal
 	// (e.g., "sharingan.md"). Stored under .aegis/ in the workspace root.
 	JournalFile() string
+
+	// SupportsPipeline returns true if this persona supports the parallel
+	// scan pipeline (chunking → parallel scanning → dedup → review).
+	// When true, main.go routes the scan through the pipeline engine
+	// instead of the legacy single-chat flow.
+	SupportsPipeline() bool
 }
 
 // registry holds all registered personas, keyed by Name().

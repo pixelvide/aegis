@@ -1,0 +1,103 @@
+# Layer 2: CWE Top-25 gap fill — Cryptographic vulnerability patterns
+# Covers Botan/wolfSSL class of bugs from Mythos research.
+
+- id: timing-attack-compare
+  source: cwe-top25-v1
+  layer: 2
+  languages: [c, cpp, go, python, javascript, java]
+  description: "Timing side-channel via non-constant-time comparison of secrets"
+  dangerous_sinks:
+    - "strcmp(secret,"
+    - "memcmp(hmac,"
+    - "== token"
+    - "!= expected_mac"
+    - "== password"
+    - "=== apiKey"
+  safe_alternatives:
+    - "CRYPTO_memcmp("
+    - "hmac.Equal("
+    - "secrets.compare_digest("
+    - "MessageDigest.isEqual("
+    - "crypto.timingSafeEqual("
+  cwe: CWE-208
+  severity: high
+
+- id: weak-rng
+  source: cwe-top25-v1
+  layer: 2
+  languages: [c, cpp, python, javascript, go, java, php]
+  description: "Weak random number generator used for security-sensitive values"
+  dangerous_sinks:
+    - "rand()"
+    - "srand("
+    - "random.random()"
+    - "Math.random()"
+    - "java.util.Random"
+  safe_alternatives:
+    - "crypto/rand (Go)"
+    - "secrets module (Python)"
+    - "crypto.randomBytes (Node.js)"
+    - "SecureRandom (Java)"
+    - "random_bytes (PHP)"
+    - "getrandom() / /dev/urandom (C)"
+  cwe: CWE-338
+  severity: high
+
+- id: padding-oracle
+  source: cwe-top25-v1
+  layer: 2
+  languages: [c, cpp, python, javascript, go, java]
+  description: "Padding oracle via distinguishable error responses for invalid padding"
+  indicators:
+    - "AES-CBC"
+    - "PKCS7"
+    - "PKCS5"
+    - "padding"
+  trigger_conditions:
+    - "Different error messages or HTTP codes for invalid padding vs invalid data"
+    - "Decryption error details leaked to the client"
+    - "CBC mode without HMAC (encrypt-then-MAC)"
+  safe_alternatives:
+    - "AES-GCM (authenticated encryption)"
+    - "ChaCha20-Poly1305"
+    - "Encrypt-then-MAC pattern"
+  cwe: CWE-354
+  severity: high
+
+- id: weak-tls-config
+  source: cwe-top25-v1
+  layer: 2
+  languages: [go, python, javascript, java, php, ruby]
+  description: "Weak TLS configuration allowing downgrade attacks or weak ciphers"
+  indicators:
+    - "SSLv3"
+    - "TLSv1.0"
+    - "TLSv1.1"
+    - "InsecureSkipVerify: true"
+    - "verify=False"
+    - "NODE_TLS_REJECT_UNAUTHORIZED"
+    - "ssl._create_unverified_context"
+    - "VERIFY_NONE"
+  safe_alternatives:
+    - "MinVersion: tls.VersionTLS12"
+    - "ssl.PROTOCOL_TLS_CLIENT"
+  cwe: CWE-327
+  severity: high
+
+- id: hardcoded-iv
+  source: cwe-top25-v1
+  layer: 2
+  languages: [c, cpp, python, javascript, go, java, php]
+  description: "Hardcoded or reused initialization vector (IV) in symmetric encryption"
+  indicators:
+    - "iv = b\""
+    - "iv = \""
+    - "IV = new byte[]"
+    - "iv := []byte{"
+    - "nonce = b\""
+  trigger_conditions:
+    - "IV/nonce is a constant value"
+    - "Same IV reused across multiple encryptions"
+    - "IV derived from non-random source"
+  cwe: CWE-329
+  severity: high

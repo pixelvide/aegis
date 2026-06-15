@@ -11,7 +11,8 @@ type killua struct{}
 
 func (killua) Name() string        { return "killua" }
 func (killua) Description() string { return "⚡ Targeted penetration testing (Hunter × Hunter)" }
-func (killua) JournalFile() string { return "killua.md" }
+func (killua) JournalFile() string       { return "killua.md" }
+func (killua) SupportsPipeline() bool    { return false }
 func (killua) DefaultMessage() string {
 	return "Identify the most critical endpoint or component in this codebase and perform a deep penetration test. Write working exploits for every vulnerability found."
 }

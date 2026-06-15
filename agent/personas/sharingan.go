@@ -10,7 +10,8 @@ type sharingan struct{}
 
 func (sharingan) Name() string        { return "sharingan" }
 func (sharingan) Description() string { return "👁️ Full security audit & reconnaissance (Naruto)" }
-func (sharingan) JournalFile() string { return "sharingan.md" }
+func (sharingan) JournalFile() string       { return "sharingan.md" }
+func (sharingan) SupportsPipeline() bool     { return true }
 func (sharingan) DefaultMessage() string {
 	return "Run a full security audit on this codebase. Map the attack surface, trace data flows, and identify all vulnerabilities with working exploit PoCs."
 }

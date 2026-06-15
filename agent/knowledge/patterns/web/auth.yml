@@ -1,0 +1,106 @@
+# Layer 1: Authentication & Session patterns from sharingan_vuln_patterns
+- id: weak-password-hash
+  source: sharingan-prompt-v1
+  layer: 1
+  languages: [php, python, javascript, go, java, ruby]
+  description: "Password stored with weak hashing algorithm (MD5, SHA1) or plaintext"
+  dangerous_sinks:
+    - "md5("
+    - "sha1("
+    - "hashlib.md5("
+    - "hashlib.sha1("
+    - "MessageDigest.getInstance(\"MD5\")"
+    - "MessageDigest.getInstance(\"SHA-1\")"
+  safe_alternatives:
+    - "bcrypt"
+    - "argon2"
+    - "scrypt"
+    - "password_hash(PASSWORD_BCRYPT)"
+  cwe: CWE-916
+  severity: high
+
+- id: hardcoded-credentials
+  source: sharingan-prompt-v1
+  layer: 1
+  languages: [php, python, javascript, go, java, ruby, typescript]
+  description: "Hardcoded credentials, API keys, or secrets in source code"
+  indicators:
+    - "password = \""
+    - "api_key = \""
+    - "secret = \""
+    - "AWS_ACCESS_KEY"
+    - "PRIVATE_KEY"
+    - "apiKey:"
+    - "token = \""
+  false_positive_signals:
+    - "os.Getenv("
+    - "process.env."
+    - "os.environ"
+    - "placeholder or example value"
+  cwe: CWE-798
+  severity: critical
+
+- id: jwt-none-algorithm
+  source: sharingan-prompt-v1
+  layer: 1
+  languages: [python, javascript, go, java, php, ruby]
+  description: "JWT accepting 'none' algorithm allowing token forgery"
+  indicators:
+    - "algorithms=[\"none\"]"
+    - "algorithm: 'none'"
+    - "verify: false"
+    - "verify_signature: false"
+  cwe: CWE-345
+  severity: critical
+
+- id: session-fixation
+  source: sharingan-prompt-v1
+  layer: 1
+  languages: [php, python, javascript, java, ruby]
+  description: "Missing session regeneration after authentication"
+  indicators:
+    - "login"
+    - "authenticate"
+  trigger_conditions:
+    - "No session ID regeneration after successful login"
+    - "Session ID in URL parameters"
+    - "Remember-me token without expiration"
+  cwe: CWE-384
+  severity: medium
+
+# Layer 1: Authorization patterns
+- id: idor
+  source: sharingan-prompt-v1
+  layer: 1
+  languages: [php, python, javascript, go, java, ruby, typescript]
+  description: "Insecure direct object reference — accessing resources without ownership check"
+  indicators:
+    - "req.params.id"
+    - "request.args.get('id')"
+    - "$_GET['id']"
+    - "r.URL.Query().Get("
+  trigger_conditions:
+    - "Object fetched by user-supplied ID without ownership verification"
+    - "No check that current user owns the requested resource"
+    - "Admin endpoint without role verification"
+  false_positive_signals:
+    - "ownership check present"
+    - "middleware verifies resource access"
+  cwe: CWE-639
+  severity: high
+
+- id: mass-assignment
+  source: sharingan-prompt-v1
+  layer: 1
+  languages: [php, python, javascript, ruby, go]
+  description: "Mass assignment allowing users to set unauthorized fields (role, permissions)"
+  dangerous_sinks:
+    - "->fill($request->all())"
+    - "Model.objects.create(**request.data)"
+    - "Object.assign(user, req.body)"
+    - "spread operator ...req.body"
+  trigger_conditions:
+    - "User request body directly mapped to model without field whitelist"
+    - "Role or permission fields not explicitly excluded"
+  cwe: CWE-915
+  severity: high

@@ -14,6 +14,34 @@ model: gemini-2.5-flash            # Model name for the provider
 # base_url: https://api.openai.com/v1  # Only needed for OpenAI-compatible providers
 # workspace: /path/to/project      # Default workspace directory
 
+# ── Scan Profile ─────────────────────────────────────────────────────────────
+# Profiles set model and scan tuning defaults. Choose one:
+#   fast  — cheap model for all roles, best_of_k=1 (quick scans)
+#   deep  — cheap scanner + smart reviewer/exploit, best_of_k=3 (thorough)
+# If set, profiles auto-configure the roles and scan sections below.
+
+# profile: deep
+
+# ── Role-Based Model Overrides ───────────────────────────────────────────────
+# The scan pipeline uses different models for different roles.
+# Override individual roles here (takes priority over profile defaults).
+
+# roles:
+#   scanner:
+#     model: gemini-2.5-flash          # Cheap model for high-volume scanning
+#   reviewer:
+#     model: gemini-2.5-pro            # Smart model for reasoning-heavy review
+#   exploit_writer:
+#     model: gemini-2.5-pro            # Smart model for exploit PoC generation
+
+# ── Scan Tuning ──────────────────────────────────────────────────────────────
+# Fine-tune the pipeline behavior.
+
+# scan:
+#   max_concurrent: 5      # Max parallel scanner subagents
+#   best_of_k: 3           # How many times to scan each chunk (higher = better coverage)
+#   chunk_max_lines: 150   # Max lines per code chunk
+
 # ── Per-Persona Overrides ────────────────────────────────────────────────────
 # Each persona inherits the global settings above.
 # Override only what differs — unset fields fall back to global.
@@ -28,3 +56,10 @@ model: gemini-2.5-flash            # Model name for the provider
 #   killua:
 #     provider: openai              # Killua uses OpenAI for targeted analysis
 #     model: gpt-4o
+
+# ── Server Reporting ─────────────────────────────────────────────────────────
+# Push findings to an Aegis server. API key via AEGIS_API_KEY env var only.
+
+# reporting:
+#   base_url: https://acme.aegis.io
+#   project_id: "your-project-uuid"

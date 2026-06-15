@@ -11,7 +11,8 @@ type senku struct{}
 
 func (senku) Name() string        { return "senku" }
 func (senku) Description() string { return "🧪 Supply chain & dependency audit (Dr. Stone)" }
-func (senku) JournalFile() string { return "senku.md" }
+func (senku) JournalFile() string       { return "senku.md" }
+func (senku) SupportsPipeline() bool    { return false }
 func (senku) DefaultMessage() string {
 	return "Audit all dependencies in this codebase. Check for known CVEs, typosquatting, and supply chain risks. Produce a detailed report."
 }

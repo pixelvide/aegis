@@ -32,9 +32,24 @@ type AegisConfig struct {
 	ThinkingLevel string `yaml:"thinking_level"` // off, low, medium, high (default: medium)
 	Workspace     string `yaml:"workspace"`      // Workspace directory
 
+	// Profile selects a preset configuration for the scan pipeline.
+	// "fast" uses the cheap model for all roles with best_of_k=1.
+	// "deep" uses the cheap model for scanning and the smart model for
+	// reviewing/exploit writing with best_of_k=3.
+	// Empty string means no profile (use explicit roles or global model).
+	Profile string `yaml:"profile"`
+
 	// Personas holds per-persona overrides. Each persona inherits the global
 	// settings above and can override provider, model, base_url, and thinking_level.
 	Personas map[string]PersonaConfig `yaml:"personas"`
+
+	// Roles holds per-role model overrides for the scan pipeline.
+	// Each role (scanner, reviewer, exploit_writer) can use a different
+	// provider and model. If not set, falls back to the global provider/model.
+	Roles RolesConfig `yaml:"roles"`
+
+	// Scan holds tuning parameters for the scan pipeline.
+	Scan ScanConfig `yaml:"scan"`
 
 	// Reporting holds Aegis server connection settings.
 	// Nested under "reporting:" in config.yml to avoid collision with
@@ -57,6 +72,147 @@ type PersonaConfig struct {
 	ThinkingLevel string `yaml:"thinking_level"`
 }
 
+// RoleConfig holds provider/model settings for a specific pipeline role.
+// If empty, the role inherits the global provider/model from AegisConfig.
+type RoleConfig struct {
+	Provider string `yaml:"provider"`
+	Model    string `yaml:"model"`
+	BaseURL  string `yaml:"base_url"`
+}
+
+// RolesConfig holds per-role model overrides for the scan pipeline.
+// The tiered model strategy uses cheap models for high-volume scanning
+// and smart models for reasoning-heavy review and exploit writing.
+type RolesConfig struct {
+	Scanner      RoleConfig `yaml:"scanner"`
+	Reviewer     RoleConfig `yaml:"reviewer"`
+	ExploitWriter RoleConfig `yaml:"exploit_writer"`
+}
+
+// ScanConfig holds tuning parameters for the scan pipeline.
+type ScanConfig struct {
+	MaxConcurrent int `yaml:"max_concurrent"` // Max parallel subagents (default: 5)
+	BestOfK       int `yaml:"best_of_k"`      // Retry count per chunk (default: 3)
+	ChunkMaxLines int `yaml:"chunk_max_lines"` // Max lines per chunk (default: 150)
+}
+
+// ScanDefaults returns a ScanConfig with default values applied.
+func (s ScanConfig) WithDefaults() ScanConfig {
+	if s.MaxConcurrent <= 0 {
+		s.MaxConcurrent = 5
+	}
+	if s.BestOfK <= 0 {
+		s.BestOfK = 3
+	}
+	if s.ChunkMaxLines <= 0 {
+		s.ChunkMaxLines = 150
+	}
+	return s
+}
+
+// profileDefaults maps profile name + provider to role-specific model defaults.
+// The "fast" profile uses the cheap model everywhere; "deep" uses smart models
+// for reviewer and exploit_writer roles.
+var profileDefaults = map[string]map[string]RolesConfig{
+	"fast": {
+		"cloudflare": {
+			Scanner:      RoleConfig{Model: "@cf/google/gemma-4-26b-a4b-it"},
+			Reviewer:     RoleConfig{Model: "@cf/google/gemma-4-26b-a4b-it"},
+			ExploitWriter: RoleConfig{Model: "@cf/google/gemma-4-26b-a4b-it"},
+		},
+		"gemini": {
+			Scanner:      RoleConfig{Model: "gemini-2.5-flash"},
+			Reviewer:     RoleConfig{Model: "gemini-2.5-flash"},
+			ExploitWriter: RoleConfig{Model: "gemini-2.5-flash"},
+		},
+		"openai": {
+			Scanner:      RoleConfig{Model: "gpt-4.1-mini"},
+			Reviewer:     RoleConfig{Model: "gpt-4.1-mini"},
+			ExploitWriter: RoleConfig{Model: "gpt-4.1-mini"},
+		},
+	},
+	"deep": {
+		"cloudflare": {
+			Scanner:      RoleConfig{Model: "@cf/google/gemma-4-26b-a4b-it"},
+			Reviewer:     RoleConfig{Model: "@cf/meta/llama-4-scout-17b-16e-instruct"},
+			ExploitWriter: RoleConfig{Model: "@cf/meta/llama-4-scout-17b-16e-instruct"},
+		},
+		"gemini": {
+			Scanner:      RoleConfig{Model: "gemini-2.5-flash"},
+			Reviewer:     RoleConfig{Model: "gemini-2.5-pro"},
+			ExploitWriter: RoleConfig{Model: "gemini-2.5-pro"},
+		},
+		"openai": {
+			Scanner:      RoleConfig{Model: "gpt-4.1-mini"},
+			Reviewer:     RoleConfig{Model: "gpt-5.4"},
+			ExploitWriter: RoleConfig{Model: "gpt-5.4"},
+		},
+	},
+}
+
+// profileScanDefaults maps profile name to scan tuning overrides.
+var profileScanDefaults = map[string]ScanConfig{
+	"fast": {BestOfK: 1},
+	"deep": {BestOfK: 3},
+}
+
+// ResolveRoles returns the effective RolesConfig by applying profile defaults
+// and then explicit role overrides. The provider is needed to select the
+// correct model defaults from the profile.
+func (a *AegisConfig) ResolveRoles() RolesConfig {
+	var roles RolesConfig
+
+	// 1. Apply profile defaults (if a profile is set)
+	if a.Profile != "" {
+		provider := a.Provider
+		if provider == "" {
+			provider = "gemini" // default provider
+		}
+		if byProvider, ok := profileDefaults[a.Profile]; ok {
+			if defaults, ok := byProvider[provider]; ok {
+				roles = defaults
+			}
+		}
+	}
+
+	// 2. Apply explicit role overrides (highest priority)
+	mergeRoleConfig(&roles.Scanner, a.Roles.Scanner)
+	mergeRoleConfig(&roles.Reviewer, a.Roles.Reviewer)
+	mergeRoleConfig(&roles.ExploitWriter, a.Roles.ExploitWriter)
+
+	return roles
+}
+
+// ResolveScan returns the effective ScanConfig by applying profile defaults
+// and then explicit scan overrides.
+func (a *AegisConfig) ResolveScan() ScanConfig {
+	scan := a.Scan
+
+	// Apply profile defaults for any zero-valued fields
+	if a.Profile != "" {
+		if defaults, ok := profileScanDefaults[a.Profile]; ok {
+			if scan.BestOfK <= 0 {
+				scan.BestOfK = defaults.BestOfK
+			}
+		}
+	}
+
+	return scan.WithDefaults()
+}
+
+// mergeRoleConfig copies non-empty fields from src into dst.
+func mergeRoleConfig(dst *RoleConfig, src RoleConfig) {
+	if src.Provider != "" {
+		dst.Provider = src.Provider
+	}
+	if src.Model != "" {
+		dst.Model = src.Model
+	}
+	if src.BaseURL != "" {
+		dst.BaseURL = src.BaseURL
+	}
+}
+
 // CLIOverrides holds values explicitly set via CLI flags.
 // Empty string means "not set" (don't override).
 type CLIOverrides struct {
@@ -65,6 +221,11 @@ type CLIOverrides struct {
 	BaseURL    string
 	Workspace  string
 	ConfigFile string
+
+	// Scan pipeline overrides
+	Profile       string // --profile (fast or deep)
+	MaxConcurrent int    // --max-concurrent
+	BestOfK       int    // --best-of-k
 
 	// Reporting overrides (AEGIS_API_KEY is env-var-only, not here)
 	ReportBaseURL string // --report-base-url
@@ -90,6 +251,10 @@ func (a *AegisConfig) Validate() error {
 
 	if a.Provider != "" && !validProviders[strings.ToLower(a.Provider)] {
 		errs = append(errs, fmt.Sprintf("unknown provider %q (supported: gemini, openai, ollama, cloudflare)", a.Provider))
+	}
+
+	if a.Profile != "" && a.Profile != "fast" && a.Profile != "deep" {
+		errs = append(errs, fmt.Sprintf("unknown profile %q (supported: fast, deep)", a.Profile))
 	}
 
 	for name, pc := range a.Personas {
@@ -306,6 +471,17 @@ func ResolveConfig(cli CLIOverrides) AegisConfig {
 		cfg.Reporting.ProjectID = cli.ProjectID
 	}
 
+	// Scan pipeline CLI overrides
+	if cli.Profile != "" {
+		cfg.Profile = cli.Profile
+	}
+	if cli.MaxConcurrent > 0 {
+		cfg.Scan.MaxConcurrent = cli.MaxConcurrent
+	}
+	if cli.BestOfK > 0 {
+		cfg.Scan.BestOfK = cli.BestOfK
+	}
+
 	return cfg
 }
 
@@ -330,12 +506,29 @@ func mergeConfig(dst, src *AegisConfig) {
 	if src.Workspace != "" {
 		dst.Workspace = src.Workspace
 	}
+	if src.Profile != "" {
+		dst.Profile = src.Profile
+	}
 	// Merge reporting config
 	if src.Reporting.BaseURL != "" {
 		dst.Reporting.BaseURL = src.Reporting.BaseURL
 	}
 	if src.Reporting.ProjectID != "" {
 		dst.Reporting.ProjectID = src.Reporting.ProjectID
+	}
+	// Merge roles config
+	mergeRoleConfig(&dst.Roles.Scanner, src.Roles.Scanner)
+	mergeRoleConfig(&dst.Roles.Reviewer, src.Roles.Reviewer)
+	mergeRoleConfig(&dst.Roles.ExploitWriter, src.Roles.ExploitWriter)
+	// Merge scan config (non-zero values only)
+	if src.Scan.MaxConcurrent > 0 {
+		dst.Scan.MaxConcurrent = src.Scan.MaxConcurrent
+	}
+	if src.Scan.BestOfK > 0 {
+		dst.Scan.BestOfK = src.Scan.BestOfK
+	}
+	if src.Scan.ChunkMaxLines > 0 {
+		dst.Scan.ChunkMaxLines = src.Scan.ChunkMaxLines
 	}
 	// Merge per-persona configs
 	for name, pc := range src.Personas {

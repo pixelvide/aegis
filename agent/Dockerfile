@@ -1,6 +1,6 @@
 # Aegis Security Agent — Multi-Stage Docker Build
 #
-# Pre-installed tools: semgrep, composer, npm, php, python3, go, govulncheck
+# Pre-installed tools: semgrep, opengrep, codeql, composer, npm, php, python3, go, govulncheck
 #
 # Build context layout (constructed by Makefile or CI):
 #   <context>/
@@ -79,6 +79,9 @@ RUN wget -q https://go.dev/dl/go1.24.3.linux-amd64.tar.gz \
 # ── Semgrep (SAST scanner — the #1 tool) ─────────────────────────
 RUN pipx install semgrep
 
+# ── OpenGrep (community fork of semgrep — open-source alternative) ─
+RUN curl -fsSL https://raw.githubusercontent.com/opengrep/opengrep/main/install.sh | bash
+
 # ── Composer (PHP package manager + audit) ────────────────────────
 RUN curl -sS https://getcomposer.org/installer | php -- --install-dir=/usr/local/bin --filename=composer
 
@@ -87,6 +90,13 @@ RUN go install golang.org/x/vuln/cmd/govulncheck@latest
 
 # ── Python security tools ─────────────────────────────────────────
 RUN pipx install pip-audit
+
+# ── CodeQL (deep SAST — complements semgrep) ──────────────────────
+ENV CODEQL_VERSION=2.21.3
+RUN wget -q "https://github.com/github/codeql-action/releases/download/codeql-bundle-v${CODEQL_VERSION}/codeql-bundle-linux64.tar.gz" \
+    && tar -xzf codeql-bundle-linux64.tar.gz -C /usr/local \
+    && rm codeql-bundle-linux64.tar.gz \
+    && ln -s /usr/local/codeql/codeql /usr/local/bin/codeql
 
 # ── Copy pre-built binaries from builder ─────────────────────────
 COPY --from=builder /out/localharness /usr/local/bin/localharness

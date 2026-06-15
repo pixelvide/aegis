@@ -27,6 +27,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/pixelvide/aegis/agent/personas"
+	"github.com/pixelvide/aegis/agent/scanners"
 	"github.com/pixelvide/localharness/adk"
 	"github.com/pixelvide/localharness/adk/policy"
 )
@@ -41,6 +42,11 @@ func main() {
 	targetURL := flag.String("target", "", "Target URL for live exploit validation (e.g., https://staging.example.com)")
 	verbose := flag.Bool("verbose", false, "Enable verbose debug logging")
 	flag.BoolVar(verbose, "v", false, "Enable verbose debug logging (shorthand)")
+
+	// Scan pipeline flags
+	profile := flag.String("profile", "", "Scan profile: fast (cheap+fast), deep (tiered+thorough)")
+	maxConcurrent := flag.Int("max-concurrent", 0, "Max parallel scanner subagents (default: 5)")
+	bestOfK := flag.Int("best-of-k", 0, "Scanner retries per chunk (default: 3)")
 
 	// Server reporting flags (AEGIS_API_KEY is env-var-only — not a CLI flag)
 	reportBaseURL := flag.String("report-base-url", "", "Aegis server URL for pushing findings (e.g., https://acme.aegis.io)")
@@ -58,11 +64,14 @@ func main() {
 	// Handle "config show" subcommand
 	if args[0] == "config" && len(args) >= 2 && args[1] == "show" {
 		resolved := ResolveConfig(CLIOverrides{
-			Provider:   *provider,
-			Model:      *model,
-			BaseURL:    *baseURL,
-			Workspace:  *workspace,
-			ConfigFile: *configFile,
+			Provider:      *provider,
+			Model:         *model,
+			BaseURL:       *baseURL,
+			Workspace:     *workspace,
+			ConfigFile:    *configFile,
+			Profile:       *profile,
+			MaxConcurrent: *maxConcurrent,
+			BestOfK:       *bestOfK,
 			ReportBaseURL: *reportBaseURL,
 			ProjectID:     *reportProject,
 		})
@@ -130,6 +139,18 @@ Update the finding.md frontmatter with:
 			SystemPrompt: deepTracerPrompt,
 			// EnableWriteTools defaults to false — read-only analysis
 		},
+		{
+			Name:         "chunk-scanner",
+			Description:  chunkScannerDesc,
+			SystemPrompt: chunkScannerPrompt,
+			// Read-only — returns JSON findings
+		},
+		{
+			Name:         "finding-reviewer",
+			Description:  findingReviewerDesc,
+			SystemPrompt: findingReviewerPrompt,
+			// Read-only — returns JSON review verdicts
+		},
 	}
 
 	// Enable auto-wake so the agent can process async subagent completion
@@ -143,6 +164,9 @@ Update the finding.md frontmatter with:
 		BaseURL:       *baseURL,
 		Workspace:     *workspace,
 		ConfigFile:    *configFile,
+		Profile:       *profile,
+		MaxConcurrent: *maxConcurrent,
+		BestOfK:       *bestOfK,
 		ReportBaseURL: *reportBaseURL,
 		ProjectID:     *reportProject,
 	})
@@ -175,6 +199,12 @@ Update the finding.md frontmatter with:
 	// Register the report_finding host tool so the LLM can push findings
 	// directly with structured data — no file scraping or hooks needed.
 	cfg.HostTools = append(cfg.HostTools, reporter.HostTool())
+
+	// Register the run_scanner host tool so the LLM can invoke external
+	// static analysis tools (semgrep, trivy, bandit, gosec) and get
+	// normalized findings back as structured JSON.
+	scannerRegistry := scanners.NewRegistry()
+	cfg.HostTools = append(cfg.HostTools, scannerRegistry.HostTool(resolved.Workspace))
 
 	agent, err := adk.NewAgent(cfg)
 	if err != nil {
@@ -210,28 +240,51 @@ Update the finding.md frontmatter with:
 		fmt.Printf("🎯 Target: %s (live validation ON)\n", *targetURL)
 	}
 	fmt.Printf("📎 Conversation ID: %s\n", agent.ConversationID())
-	fmt.Printf("📤 Prompt: %s\n\n", prompt)
 
-	resp, err := agent.Chat(ctx, prompt)
-	if err != nil {
-		log.Fatalf("Chat failed: %v", err)
+	// ── Execution path: Pipeline vs Legacy Chat ────────────────────────
+	if p.SupportsPipeline() {
+		// Pipeline mode: parallel chunked scanning with best-of-K.
+		scanCfg := resolved.ResolveScan()
+		fmt.Printf("🔬 Mode: Pipeline (chunks=%d, best-of-k=%d, concurrent=%d)\n",
+			scanCfg.ChunkMaxLines, scanCfg.BestOfK, scanCfg.MaxConcurrent)
+		if resolved.Profile != "" {
+			fmt.Printf("📊 Profile: %s\n", resolved.Profile)
+		}
+		fmt.Printf("📤 Prompt: %s\n\n", prompt)
+
+		runner, err := NewPipelineRunner(agent, resolved, reporter)
+		if err != nil {
+			log.Fatalf("Failed to create pipeline runner: %v", err)
+		}
+
+		if err := runner.Run(ctx, prompt); err != nil {
+			log.Fatalf("Pipeline failed: %v", err)
+		}
+	} else {
+		// Legacy mode: single agent.Chat() call.
+		fmt.Printf("📤 Prompt: %s\n\n", prompt)
+
+		resp, err := agent.Chat(ctx, prompt)
+		if err != nil {
+			log.Fatalf("Chat failed: %v", err)
+		}
+
+		fmt.Println(resp.Text)
+
+		fmt.Printf("\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
+		fmt.Printf("Steps: %d\n", len(resp.Steps))
+		if resp.Usage != nil {
+			fmt.Printf("Tokens: prompt=%d, completion=%d, total=%d\n",
+				resp.Usage.PromptTokens, resp.Usage.CompletionTokens, resp.Usage.TotalTokens)
+		}
+		fmt.Printf("Scan ID: %s\n", scanID)
+		fmt.Printf("Findings: %s\n", reporter.SummaryLine())
 	}
-
-	fmt.Println(resp.Text)
 
 	// Flush any buffered findings to local JSON.
 	if err := reporter.Close(); err != nil {
 		log.Printf("Warning: failed to flush reporter: %v", err)
 	}
-
-	fmt.Printf("\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
-	fmt.Printf("Steps: %d\n", len(resp.Steps))
-	if resp.Usage != nil {
-		fmt.Printf("Tokens: prompt=%d, completion=%d, total=%d\n",
-			resp.Usage.PromptTokens, resp.Usage.CompletionTokens, resp.Usage.TotalTokens)
-	}
-	fmt.Printf("Scan ID: %s\n", scanID)
-	fmt.Printf("Findings: %s\n", reporter.SummaryLine())
 }
 
 
@@ -250,6 +303,9 @@ Flags:
   --base-url=<url>         Base URL for OpenAI-compatible providers
   --target=<url>           Target URL for live exploit validation (runs exploits against this URL)
   --config=<path>          Path to YAML config file (overrides auto-discovery)
+  --profile=<name>         Scan profile: fast (cheap+fast), deep (tiered+thorough)
+  --max-concurrent=<n>     Max parallel scanner subagents (default: 5)
+  --best-of-k=<n>          Scanner retries per chunk (default: 3, higher = better coverage)
   --report-base-url=<url>  Aegis server URL for pushing findings
   --project=<uuid>         Project ID for server reporting
   --verbose, -v            Enable verbose debug logging
@@ -272,7 +328,8 @@ Config files (YAML):
 
   Example config.yml:
     provider: gemini
-    model: gemini-3.5-flash
+    model: gemini-2.5-flash
+    profile: deep                        # fast or deep scan profile
     reporting:
       base_url: https://acme.aegis.io
       project_id: "your-project-uuid"
