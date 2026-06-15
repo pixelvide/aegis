@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from "react"
+import { useEffect, useState } from "react"
 import { Link, useSearchParams } from "react-router-dom"
 import { SeverityBadge, FindingStatusBadge } from "@/components/severity-badge"
 import { Card, CardContent } from "@/components/ui/card"
@@ -14,24 +14,22 @@ export default function FindingsPage() {
   const [loading, setLoading] = useState(true)
   const [severityFilter, setSeverityFilter] = useState<string>("")
   const [statusFilter, setStatusFilter] = useState<string>("")
-  const { currentProject } = useProject()
+  const { currentProject, loading: projectLoading } = useProject()
   const [searchParams, setSearchParams] = useSearchParams()
   const scanIdFilter = searchParams.get("scan_id") || ""
 
-  const fetchFindings = useCallback((severity: string, status: string, scanId: string) => {
+  useEffect(() => {
+    if (projectLoading || !currentProject) return
     findingsApi.list({
-      severity: severity || undefined,
-      status: status || undefined,
-      scan_id: scanId || undefined,
+      project_id: currentProject.id,
+      severity: severityFilter || undefined,
+      status: statusFilter || undefined,
+      scan_id: scanIdFilter || undefined,
     })
       .then(setFindings)
       .catch(() => setFindings([]))
       .finally(() => setLoading(false))
-  }, [])
-
-  useEffect(() => {
-    fetchFindings(severityFilter, statusFilter, scanIdFilter)
-  }, [fetchFindings, severityFilter, statusFilter, scanIdFilter])
+  }, [currentProject, projectLoading, severityFilter, statusFilter, scanIdFilter])
 
 
   const severities: Severity[] = ["critical", "high", "medium", "low", "info"]

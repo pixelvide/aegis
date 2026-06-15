@@ -15,7 +15,7 @@ import {
 
 export default function FindingDetailPage() {
   const { id } = useParams<{ id: string }>()
-  const { currentProject } = useProject()
+  const { currentProject, loading: projectLoading } = useProject()
   const findingsPath = currentProject ? `/project/${currentProject.id}/findings` : "/findings"
   const [finding, setFinding] = useState<Finding | null>(null)
   const [loading, setLoading] = useState(true)
@@ -23,12 +23,12 @@ export default function FindingDetailPage() {
   const [copied, setCopied] = useState(false)
 
   useEffect(() => {
-    if (!id) return
+    if (!id || projectLoading || !currentProject) return
     findingsApi.get(id)
       .then(setFinding)
       .catch(() => setFinding(null))
       .finally(() => setLoading(false))
-  }, [id])
+  }, [id, projectLoading, currentProject])
 
   const handleStatusChange = async (status: FindingStatus) => {
     if (!finding) return
