@@ -269,7 +269,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/v1/config/auth", s.handleAuthConfig) // public — UI needs this pre-login
 
 	// ─── Tenant-scoped routes (auth + verified email + org context) ──
-	// Scans (read-only, legacy data)
+	// Scans (read-only for users — populated by agent lifecycle events)
 	s.mux.HandleFunc("GET /api/v1/projects/{projectId}/scans", s.protectedMiddleware(s.handleListScans))
 	s.mux.HandleFunc("GET /api/v1/projects/{projectId}/scans/{id}", s.protectedMiddleware(s.handleGetScan))
 
@@ -299,6 +299,10 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/v1/agent/findings", s.agentMiddleware(s.handleAgentListFindings))
 	s.mux.HandleFunc("PATCH /api/v1/agent/findings/{id}", s.agentMiddleware(s.handleAgentUpdateFinding))
 	s.mux.HandleFunc("POST /api/v1/agent/findings/{id}/exploits", s.agentMiddleware(s.handleAgentCreateExploit))
+
+	// Agent scan lifecycle
+	s.mux.HandleFunc("POST /api/v1/agent/scans", s.agentMiddleware(s.handleAgentCreateScan))
+	s.mux.HandleFunc("PATCH /api/v1/agent/scans/{id}", s.agentMiddleware(s.handleAgentCompleteScan))
 
 	// ─── Token Management — Project-Scoped (any org member) ─────────
 	s.mux.HandleFunc("POST /api/v1/projects/{projectId}/tokens", s.protectedMiddleware(s.handleCreateProjectToken))

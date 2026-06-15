@@ -175,9 +175,19 @@ aegis config show
 
 ## Server Reporting
 
-When `AEGIS_BASE_URL` and `AEGIS_API_KEY` are set, findings are pushed to the Aegis server in real-time via the `report_finding` tool.
+When `AEGIS_BASE_URL` and `AEGIS_API_KEY` are set, the agent integrates with the Aegis server for scan tracking and finding reporting.
 
-### How It Works
+### Scan Lifecycle
+
+Each agent run follows a structured lifecycle:
+
+1. **Start scan** — The agent calls `POST /api/v1/agent/scans` with `{scan_id, project_id, persona, target}`. The server creates a scan record with `status: "running"`.
+2. **Push findings** — As the persona discovers vulnerabilities, each finding is pushed via `POST /api/v1/agent/findings` with the `scan_id`.
+3. **Complete scan** — When the scan finishes, the agent calls `PATCH /api/v1/agent/scans/{id}` with `{status: "completed"}`. The server computes the severity summary automatically from the findings.
+
+If the agent crashes or is killed (SIGINT/SIGTERM), a signal handler sends `{status: "failed", error_message: "agent terminated by signal: ..."}` before exiting. The Aegis UI also detects "stale" scans that have been running for more than 2 hours and displays a warning.
+
+### How Findings Are Pushed
 
 1. The agent registers a `report_finding` host tool with the LLM
 2. When a persona discovers a vulnerability, it calls `report_finding()` with structured data
@@ -187,7 +197,7 @@ When `AEGIS_BASE_URL` and `AEGIS_API_KEY` are set, findings are pushed to the Ae
 
 ### Scan Correlation
 
-Each agent run generates a UUID v7 `scan_id` at startup. All findings from that run share the same `scan_id`, which the server uses to group findings into scans.
+Each agent run generates a UUID v7 `scan_id` at startup. All findings from that run share the same `scan_id`, which the server uses to group findings into scans. The `scan_id` is also used as the scan record's primary key.
 
 ### Local Output
 
@@ -210,6 +220,7 @@ Findings are always written to `.aegis/findings.json` in the workspace:
   ]
 }
 ```
+
 
 ---
 

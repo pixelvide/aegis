@@ -6,7 +6,7 @@ import (
 	"github.com/pixelvide/aegis/server/internal/models"
 )
 
-// ─── Scans (read-only, legacy data) ─────────────────────────────────────────
+// ─── Scans (user-facing read-only, populated by agent lifecycle events) ──────
 
 func (s *Server) handleListScans(w http.ResponseWriter, r *http.Request) {
 	projectId := pathParam(r, "projectId")

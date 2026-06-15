@@ -65,10 +65,11 @@ Port the Aegis scanning agent into the monorepo and connect it to the platform. 
   - **Docker Compose:** Agent is NOT included in docker-compose.yml. Users run the agent binary or Docker image manually.
 - **Agent → Server communication:**
   - Agent generates a **UUID v7** (time-sortable) as `scan_id` at the start of each run
+  - Agent registers the scan via `POST /api/v1/agent/scans` before pushing findings
   - Every finding pushed includes this `scan_id` for correlation
   - Server groups findings by `scan_id` for display on the Scans page
-  - Scan metadata (persona, agent version, target info) is inferred from findings
-  - No explicit scan lifecycle (no start/complete states) — the `scan_id` is a correlation ID only
+  - Agent signals completion via `PATCH /api/v1/agent/scans/{id}` — server computes severity summary from findings
+  - Graceful shutdown: agent sends `{status: "failed"}` on SIGINT/SIGTERM via signal handler
 - **Finding reporting via `report_finding` host tool:**
   - Personas call `report_finding()` directly with structured finding data
   - Reporter pushes to Aegis server via `POST /api/v1/agent/findings` with 3x exponential backoff retry
@@ -119,8 +120,11 @@ Port the Aegis scanning agent into the monorepo and connect it to the platform. 
   - ✅ Created `agent/aegis-run` Docker convenience script
   - ✅ Server: `scan_id` added to `AgentFindingRequest` (required field + validation)
   - ✅ Documentation: `docs/agent.md`
+  - ✅ Agent scan lifecycle: `POST /agent/scans` (start) + `PATCH /agent/scans/{id}` (complete/fail)
+  - ✅ Agent signal handler (SIGINT/SIGTERM) sends scan failure on crash
+  - ✅ Server computes scan summary from findings on completion
+  - ✅ UI: Scans page — card-based layout with severity breakdown bars, stale scan detection
 - **Remaining (deferred):**
-  - UI: Scans page shows scan groups from agent pushes (grouped by `scan_id`, sorted newest first)
   - UI: Agents page updated with setup/usage instructions (token + CLI command)
 
 ---

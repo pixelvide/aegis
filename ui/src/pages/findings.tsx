@@ -1,9 +1,9 @@
 import { useEffect, useState, useCallback } from "react"
-import { Link } from "react-router-dom"
+import { Link, useSearchParams } from "react-router-dom"
 import { SeverityBadge, FindingStatusBadge } from "@/components/severity-badge"
 import { Card, CardContent } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
-import { Bug, Filter, ArrowUpDown } from "lucide-react"
+import { Bug, Filter, ArrowUpDown, X } from "lucide-react"
 import { findingsApi } from "@/lib/api"
 import { formatDate } from "@/lib/utils"
 import { useProject } from "@/lib/project-context"
@@ -15,11 +15,14 @@ export default function FindingsPage() {
   const [severityFilter, setSeverityFilter] = useState<string>("")
   const [statusFilter, setStatusFilter] = useState<string>("")
   const { currentProject } = useProject()
+  const [searchParams, setSearchParams] = useSearchParams()
+  const scanIdFilter = searchParams.get("scan_id") || ""
 
-  const fetchFindings = useCallback((severity: string, status: string) => {
+  const fetchFindings = useCallback((severity: string, status: string, scanId: string) => {
     findingsApi.list({
       severity: severity || undefined,
       status: status || undefined,
+      scan_id: scanId || undefined,
     })
       .then(setFindings)
       .catch(() => setFindings([]))
@@ -27,8 +30,9 @@ export default function FindingsPage() {
   }, [])
 
   useEffect(() => {
-    fetchFindings(severityFilter, statusFilter)
-  }, [fetchFindings, severityFilter, statusFilter])
+    fetchFindings(severityFilter, statusFilter, scanIdFilter)
+  }, [fetchFindings, severityFilter, statusFilter, scanIdFilter])
+
 
   const severities: Severity[] = ["critical", "high", "medium", "low", "info"]
   const statuses: FindingStatus[] = ["open", "confirmed", "fixed", "false_positive", "wontfix", "verified"]
@@ -41,9 +45,20 @@ export default function FindingsPage() {
       </div>
 
       {/* Filters */}
-      <div className="flex gap-2 flex-wrap" id="findings-filters">
+      <div className="flex gap-2 flex-wrap items-center" id="findings-filters">
         <div className="flex items-center gap-2">
           <Filter className="h-4 w-4 text-muted-foreground" />
+          {scanIdFilter && (
+            <span className="inline-flex items-center gap-1.5 text-xs bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-500/20 px-2.5 py-1 rounded-full">
+              Scan: {scanIdFilter.slice(0, 8)}…
+              <button
+                onClick={() => setSearchParams(prev => { prev.delete("scan_id"); return prev })}
+                className="hover:text-blue-800 dark:hover:text-blue-200"
+              >
+                <X className="h-3 w-3" />
+              </button>
+            </span>
+          )}
           <select
             value={severityFilter}
             onChange={(e) => { setLoading(true); setSeverityFilter(e.target.value) }}
@@ -66,13 +81,13 @@ export default function FindingsPage() {
               <option key={s} value={s}>{s.replace("_", " ")}</option>
             ))}
           </select>
-          {(severityFilter || statusFilter) && (
+          {(severityFilter || statusFilter || scanIdFilter) && (
             <Button
               variant="ghost"
               size="sm"
-              onClick={() => { setLoading(true); setSeverityFilter(""); setStatusFilter("") }}
+              onClick={() => { setLoading(true); setSeverityFilter(""); setStatusFilter(""); setSearchParams(prev => { prev.delete("scan_id"); return prev }) }}
             >
-              Clear
+              Clear all
             </Button>
           )}
         </div>

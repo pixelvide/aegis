@@ -27,6 +27,11 @@ type Store interface {
 	// DeleteScan removes a scan and all its findings.
 	DeleteScan(ctx context.Context, id string) error
 
+	// GetFindingSummaryByScan computes the severity breakdown and total count
+	// for all findings belonging to a scan. Used by the scan completion handler
+	// to populate scan stats server-side.
+	GetFindingSummaryByScan(ctx context.Context, scanID string) (*models.Summary, int, error)
+
 	// --- Findings ---
 
 	// CreateFinding persists a new finding.

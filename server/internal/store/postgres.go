@@ -74,16 +74,16 @@ func (p *Postgres) t(table string) string {
 
 func (p *Postgres) CreateScan(ctx context.Context, scan *models.Scan) error {
 	q := fmt.Sprintf(`INSERT INTO %s (
-		id, name, target_type, target_path, target_url, target_ref,
+		id, project_id, name, target_type, target_path, target_url, target_ref,
 		persona, mode, status, prompt, agent_pid, conversation_id,
 		workspace_path, finding_count,
 		sum_total, sum_critical, sum_high, sum_medium, sum_low, sum_info,
 		error_message, created_at, started_at, completed_at
-	) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24)`,
+	) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25)`,
 		p.t("scans"))
 
 	_, err := p.db.ExecContext(ctx, q,
-		scan.ID, scan.Name, scan.Target.Type, scan.Target.Path, scan.Target.URL, scan.Target.Ref,
+		scan.ID, scan.ProjectID, scan.Name, scan.Target.Type, scan.Target.Path, scan.Target.URL, scan.Target.Ref,
 		scan.Persona, scan.Mode, scan.Status, scan.Prompt, scan.AgentPID, scan.ConversationID,
 		scan.WorkspacePath, scan.FindingCount,
 		summaryField(scan.Summary, func(s *models.Summary) int { return s.Total }),
@@ -102,7 +102,7 @@ func (p *Postgres) CreateScan(ctx context.Context, scan *models.Scan) error {
 
 func (p *Postgres) GetScan(ctx context.Context, id string) (*models.Scan, error) {
 	q := fmt.Sprintf(`SELECT
-		id, name, target_type, target_path, target_url, target_ref,
+		id, project_id, name, target_type, target_path, target_url, target_ref,
 		persona, mode, status, prompt, agent_pid, conversation_id,
 		workspace_path, finding_count,
 		sum_total, sum_critical, sum_high, sum_medium, sum_low, sum_info,
@@ -113,7 +113,7 @@ func (p *Postgres) GetScan(ctx context.Context, id string) (*models.Scan, error)
 	var startedAt, completedAt sql.NullTime
 
 	err := p.db.QueryRowContext(ctx, q, id).Scan(
-		&scan.ID, &scan.Name, &scan.Target.Type, &scan.Target.Path, &scan.Target.URL, &scan.Target.Ref,
+		&scan.ID, &scan.ProjectID, &scan.Name, &scan.Target.Type, &scan.Target.Path, &scan.Target.URL, &scan.Target.Ref,
 		&scan.Persona, &scan.Mode, &scan.Status, &scan.Prompt, &scan.AgentPID, &scan.ConversationID,
 		&scan.WorkspacePath, &scan.FindingCount,
 		&scan.Summary.Total, &scan.Summary.Critical, &scan.Summary.High,
@@ -138,7 +138,7 @@ func (p *Postgres) GetScan(ctx context.Context, id string) (*models.Scan, error)
 
 func (p *Postgres) ListScans(ctx context.Context, projectID string) ([]models.Scan, error) {
 	q := fmt.Sprintf(`SELECT
-		id, name, target_type, target_path, target_url, target_ref,
+		id, project_id, name, target_type, target_path, target_url, target_ref,
 		persona, mode, status, prompt, agent_pid, conversation_id,
 		workspace_path, finding_count,
 		sum_total, sum_critical, sum_high, sum_medium, sum_low, sum_info,
@@ -165,7 +165,7 @@ func (p *Postgres) ListScans(ctx context.Context, projectID string) ([]models.Sc
 		var startedAt, completedAt sql.NullTime
 
 		if err := rows.Scan(
-			&scan.ID, &scan.Name, &scan.Target.Type, &scan.Target.Path, &scan.Target.URL, &scan.Target.Ref,
+			&scan.ID, &scan.ProjectID, &scan.Name, &scan.Target.Type, &scan.Target.Path, &scan.Target.URL, &scan.Target.Ref,
 			&scan.Persona, &scan.Mode, &scan.Status, &scan.Prompt, &scan.AgentPID, &scan.ConversationID,
 			&scan.WorkspacePath, &scan.FindingCount,
 			&scan.Summary.Total, &scan.Summary.Critical, &scan.Summary.High,
@@ -214,6 +214,31 @@ func (p *Postgres) UpdateScan(ctx context.Context, scan *models.Scan) error {
 func (p *Postgres) DeleteScan(ctx context.Context, id string) error {
 	_, err := p.db.ExecContext(ctx, fmt.Sprintf("DELETE FROM %s WHERE id = $1", p.t("scans")), id)
 	return err
+}
+
+// GetFindingSummaryByScan computes the severity breakdown and total count
+// for all findings belonging to a scan.
+func (p *Postgres) GetFindingSummaryByScan(ctx context.Context, scanID string) (*models.Summary, int, error) {
+	q := fmt.Sprintf(`SELECT
+		COUNT(*) AS total,
+		COALESCE(SUM(CASE WHEN severity = 'critical' THEN 1 ELSE 0 END), 0),
+		COALESCE(SUM(CASE WHEN severity = 'high' THEN 1 ELSE 0 END), 0),
+		COALESCE(SUM(CASE WHEN severity = 'medium' THEN 1 ELSE 0 END), 0),
+		COALESCE(SUM(CASE WHEN severity = 'low' THEN 1 ELSE 0 END), 0),
+		COALESCE(SUM(CASE WHEN severity = 'info' THEN 1 ELSE 0 END), 0)
+	FROM %s WHERE scan_id = $1`, p.t("findings"))
+
+	s := &models.Summary{}
+	var total int
+	err := p.db.QueryRowContext(ctx, q, scanID).Scan(
+		&total,
+		&s.Critical, &s.High, &s.Medium, &s.Low, &s.Info,
+	)
+	if err != nil {
+		return nil, 0, err
+	}
+	s.Total = total
+	return s, total, nil
 }
 
 // ─── Findings ───────────────────────────────────────────────────────────────

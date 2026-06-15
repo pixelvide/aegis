@@ -1,6 +1,7 @@
 package api
 
 import (
+	"fmt"
 	"log/slog"
 	"net/http"
 	"regexp"
@@ -369,4 +370,169 @@ func findingFilterFromQuery(r *http.Request, projectID string) findingFilter {
 
 // findingFilter is a local type to construct store.FindingFilter.
 type findingFilter = store.FindingFilter
+
+// ─── Agent Scan Lifecycle ───────────────────────────────────────────────────
+
+// AgentCreateScanRequest is the body for POST /api/v1/agent/scans.
+type AgentCreateScanRequest struct {
+	ScanID    string          `json:"scan_id"`
+	ProjectID string          `json:"project_id"`
+	Persona   string          `json:"persona"`
+	Name      string          `json:"name,omitempty"`
+	Target    *models.Target  `json:"target,omitempty"`
+}
+
+// AgentCompleteScanRequest is the body for PATCH /api/v1/agent/scans/{id}.
+type AgentCompleteScanRequest struct {
+	Status       string `json:"status"`
+	ErrorMessage string `json:"error_message,omitempty"`
+}
+
+// validPersonas is the set of recognized agent persona names.
+var validPersonas = map[string]bool{
+	"sharingan": true,
+	"senku":     true,
+	"killua":    true,
+}
+
+func (s *Server) handleAgentCreateScan(w http.ResponseWriter, r *http.Request) {
+	var req AgentCreateScanRequest
+	if err := decodeJSON(r, &req); err != nil {
+		slog.Error("agent scan decode error", "error", err)
+		writeApiError(w, r, errValidationInvalidBody)
+		return
+	}
+
+	// Validate required fields
+	if req.ScanID == "" {
+		writeApiError(w, r, errValidationFieldRequired.WithMessage("scan_id is required"))
+		return
+	}
+	if len(req.ScanID) > 36 {
+		writeApiError(w, r, errValidationFieldInvalid.WithMessage("scan_id must be 36 chars or less"))
+		return
+	}
+	if req.ProjectID == "" {
+		writeApiError(w, r, errValidationFieldRequired.WithMessage("project_id is required"))
+		return
+	}
+	if req.Persona == "" {
+		writeApiError(w, r, errValidationFieldRequired.WithMessage("persona is required"))
+		return
+	}
+	if !validPersonas[strings.ToLower(req.Persona)] {
+		writeApiError(w, r, errValidationFieldInvalid.WithMessage("persona must be sharingan, senku, or killua"))
+		return
+	}
+
+	// Enforce token project scope
+	token := middleware.AgentTokenFromContext(r.Context())
+	if token != nil && token.ProjectID != "" && token.ProjectID != req.ProjectID {
+		writeApiError(w, r, errPermissionDenied.WithMessage("token is scoped to a different project"))
+		return
+	}
+
+	// Auto-generate name if not provided
+	name := req.Name
+	if name == "" {
+		name = fmt.Sprintf("%s scan — %s", strings.Title(strings.ToLower(req.Persona)), time.Now().UTC().Format("2006-01-02 15:04"))
+	}
+
+	// Build target (default to empty if not provided)
+	target := models.Target{Type: "path"}
+	if req.Target != nil {
+		target = *req.Target
+	}
+
+	now := time.Now().UTC()
+	scan := &models.Scan{
+		ID:        req.ScanID,
+		ProjectID: req.ProjectID,
+		Name:      name,
+		Target:    target,
+		Persona:   strings.ToLower(req.Persona),
+		Mode:      models.ExecDirect,
+		Status:    models.ScanRunning,
+		Summary:   &models.Summary{},
+		CreatedAt: now,
+		StartedAt: &now,
+	}
+
+	ts := tenantStore(r)
+
+	// Check for existing scan with this ID (409 Conflict)
+	existing, err := ts.GetScan(r.Context(), req.ScanID)
+	if err != nil {
+		slog.Error("get scan check failed", "error", err)
+		writeApiError(w, r, errServerInternal)
+		return
+	}
+	if existing != nil {
+		writeApiError(w, r, errResourceConflict.WithMessage("scan with this scan_id already exists"))
+		return
+	}
+
+	if err := ts.CreateScan(r.Context(), scan); err != nil {
+		slog.Error("create scan failed", "error", err, "scan_id", req.ScanID)
+		writeApiError(w, r, errServerInternal)
+		return
+	}
+
+	writeResult(w, r, http.StatusCreated, scan)
+}
+
+func (s *Server) handleAgentCompleteScan(w http.ResponseWriter, r *http.Request) {
+	id := pathParam(r, "id")
+
+	var req AgentCompleteScanRequest
+	if err := decodeJSON(r, &req); err != nil {
+		writeApiError(w, r, errValidationInvalidBody)
+		return
+	}
+
+	// Validate status
+	status := models.ScanStatus(strings.ToLower(req.Status))
+	if status != models.ScanCompleted && status != models.ScanFailed {
+		writeApiError(w, r, errValidationFieldInvalid.WithMessage("status must be 'completed' or 'failed'"))
+		return
+	}
+
+	ts := tenantStore(r)
+
+	// Get existing scan
+	scan, err := ts.GetScan(r.Context(), id)
+	if err != nil {
+		slog.Error("get scan failed", "error", err)
+		writeApiError(w, r, errServerInternal)
+		return
+	}
+	if scan == nil {
+		writeApiError(w, r, errResourceNotFound.WithMessage("scan not found"))
+		return
+	}
+
+	// Compute summary from findings (server-side)
+	summary, findingCount, err := ts.GetFindingSummaryByScan(r.Context(), id)
+	if err != nil {
+		slog.Error("compute scan summary failed", "error", err, "scan_id", id)
+		writeApiError(w, r, errServerInternal)
+		return
+	}
+
+	// Update scan
+	now := time.Now().UTC()
+	scan.Status = status
+	scan.CompletedAt = &now
+	scan.Summary = summary
+	scan.FindingCount = findingCount
+	scan.ErrorMessage = req.ErrorMessage
+
+	if err := ts.UpdateScan(r.Context(), scan); err != nil {
+		slog.Error("update scan failed", "error", err, "scan_id", id)
+		writeApiError(w, r, errServerInternal)
+		return
+	}
+
+	writeResult(w, r, http.StatusOK, scan)
+}
 
