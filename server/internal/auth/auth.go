@@ -119,10 +119,13 @@ func (s *Service) ValidateToken(tokenStr string) (string, string, error) {
 // GenerateMFAToken creates a short-lived JWT for the MFA challenge step.
 // This token cannot be used as a full auth token — it only proves password
 // was correct and identifies which user needs to complete MFA.
-func (s *Service) GenerateMFAToken(userID string) (string, error) {
+// Returns the token string and the JTI (for Valkey allowlist keying).
+func (s *Service) GenerateMFAToken(userID string) (string, string, error) {
 	now := time.Now().UTC()
+	jti := uuid.New().String()
 	claims := &Claims{
 		UserID:     userID,
+		JTI:        jti,
 		MFAPending: true,
 		RegisteredClaims: jwt.RegisteredClaims{
 			IssuedAt:  jwt.NewNumericDate(now),
@@ -132,12 +135,16 @@ func (s *Service) GenerateMFAToken(userID string) (string, error) {
 	}
 
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	return token.SignedString(s.jwtSecret)
+	signed, err := token.SignedString(s.jwtSecret)
+	if err != nil {
+		return "", "", err
+	}
+	return signed, jti, nil
 }
 
-// ValidateMFAToken parses a JWT and returns the user ID only if it is
+// ValidateMFAToken parses a JWT and returns the user ID and JTI only if it is
 // a valid MFA-pending token (not a full auth token).
-func (s *Service) ValidateMFAToken(tokenStr string) (string, error) {
+func (s *Service) ValidateMFAToken(tokenStr string) (string, string, error) {
 	claims := &Claims{}
 	token, err := jwt.ParseWithClaims(tokenStr, claims, func(t *jwt.Token) (interface{}, error) {
 		if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
@@ -146,18 +153,18 @@ func (s *Service) ValidateMFAToken(tokenStr string) (string, error) {
 		return s.jwtSecret, nil
 	})
 	if err != nil {
-		return "", fmt.Errorf("parse mfa token: %w", err)
+		return "", "", fmt.Errorf("parse mfa token: %w", err)
 	}
 	if !token.Valid {
-		return "", fmt.Errorf("invalid mfa token")
+		return "", "", fmt.Errorf("invalid mfa token")
 	}
 	if !claims.MFAPending {
-		return "", fmt.Errorf("not an mfa token")
+		return "", "", fmt.Errorf("not an mfa token")
 	}
 	if claims.UserID == "" {
-		return "", fmt.Errorf("mfa token missing user ID")
+		return "", "", fmt.Errorf("mfa token missing user ID")
 	}
-	return claims.UserID, nil
+	return claims.UserID, claims.JTI, nil
 }
 
 // TokenTTL returns the configured token time-to-live.

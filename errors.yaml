@@ -33,6 +33,14 @@ types:
         ref: E10007
         status: 403
         message: "Authentication is only available on the base domain"
+      mfa_token_exhausted:
+        ref: E10008
+        status: 401
+        message: "Too many failed attempts. Please log in again."
+      mfa_otp_cooldown:
+        ref: E10009
+        status: 429
+        message: "Please wait before requesting another code"
 
   token_error:
     codes:

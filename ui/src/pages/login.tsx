@@ -78,6 +78,16 @@ export default function LoginPage() {
       setEmailOtpSent(true)
       setSelectedDevice(device)
     } catch (err: unknown) {
+      const errorCode = (err as { code?: string })?.code
+      if (errorCode === "mfa_token_exhausted") {
+        toast.error("Too many failed attempts. Please log in again.")
+        setTimeout(() => resetMFA(), 3000)
+        return
+      }
+      if (errorCode === "mfa_otp_cooldown") {
+        toast.error("Please wait before requesting another code")
+        return
+      }
       toast.error(err instanceof Error ? err.message : "Failed to send code")
     } finally {
       setSendingOtp(false)
@@ -102,7 +112,16 @@ export default function LoginPage() {
 
       if (!res.ok) {
         const body = await res.json().catch(() => ({ errors: [{ message: "Verification failed" }] }))
+        const errorCode = body.errors?.[0]?.code
         const msg = body.errors?.[0]?.message || body.error || "Verification failed"
+
+        // MFA token exhausted — redirect to login
+        if (errorCode === "mfa_token_exhausted") {
+          toast.error("Too many failed attempts. Please log in again.")
+          setTimeout(() => resetMFA(), 3000)
+          return
+        }
+
         throw new Error(msg)
       }
 
@@ -129,14 +148,14 @@ export default function LoginPage() {
             const org = orgs.find((o: { slug: string }) => o.slug === savedSlug) || orgs[0]
             const protocol = window.location.protocol
             const port = window.location.port ? `:${window.location.port}` : ""
-            window.location.href = `${protocol}//${org.slug}.${baseDomain}${port}/`
+            window.location.assign(`${protocol}//${org.slug}.${baseDomain}${port}/`)
             return
           }
         }
       } catch {
         // Fall through to default redirect
       }
-      window.location.href = "/"
+      window.location.assign("/")
     } catch (err: unknown) {
       toast.error(err instanceof Error ? err.message : "Verification failed")
     } finally {

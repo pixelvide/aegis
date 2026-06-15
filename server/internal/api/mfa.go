@@ -10,6 +10,7 @@ import (
 	"time"
 
 	authpkg "github.com/pixelvide/aegis/server/internal/auth"
+	"github.com/pixelvide/aegis/server/internal/cache"
 	"github.com/pixelvide/aegis/server/internal/email/templates"
 	"github.com/pixelvide/aegis/server/internal/middleware"
 	"github.com/pixelvide/aegis/server/internal/models"
@@ -540,11 +541,18 @@ func (s *Server) handleMFAValidate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Validate the MFA pending token
-	userID, err := s.auth.ValidateMFAToken(req.MFAToken)
+	// Validate the MFA pending token (JWT signature + expiry + MFA flag)
+	userID, mfaJTI, err := s.auth.ValidateMFAToken(req.MFAToken)
 	if err != nil {
 		slog.Warn("invalid or expired MFA token during validation", "error", err)
 		writeApiError(w, r, errAuthMFAInvalidCode.WithMessage("Invalid or expired MFA token"))
+		return
+	}
+
+	// Validate against Valkey allowlist (fail-closed)
+	if _, err := s.cache.ValidateMFASession(r.Context(), mfaJTI); err != nil {
+		slog.Warn("MFA session not in allowlist", "jti", mfaJTI, "error", err)
+		writeApiError(w, r, errMFATokenExhausted)
 		return
 	}
 
@@ -560,62 +568,78 @@ func (s *Server) handleMFAValidate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// ── Validate the code ────────────────────────────────────────────
+	codeValid := false
+
 	if req.IsRecovery {
 		// Try each stored recovery code (bcrypt comparison)
-		matched := s.tryRecoveryCode(r, user.ID, req.Code)
-		if !matched {
-			slog.Warn("invalid recovery code attempt", "user_id", user.ID)
-			writeApiError(w, r, errAuthMFAInvalidCode.WithMessage("Invalid recovery code"))
-			return
+		if s.tryRecoveryCode(r, user.ID, req.Code) {
+			codeValid = true
 		}
 	} else if req.DeviceID != "" {
 		// Validate against a specific device
 		device, err := s.common.GetMFADevice(r.Context(), req.DeviceID, user.ID)
 		if err != nil {
 			slog.Error("failed to get MFA device during login validation", "device_id", req.DeviceID, "user_id", user.ID, "error", err)
-			writeApiError(w, r, errAuthMFAInvalidCode.WithMessage("Invalid device"))
-			return
 		}
-		if device == nil || !device.Verified {
-			slog.Warn("MFA device not found or not verified during login", "device_id", req.DeviceID, "user_id", user.ID)
-			writeApiError(w, r, errAuthMFAInvalidCode.WithMessage("Invalid device"))
-			return
-		}
+		if device != nil && device.Verified {
+			switch device.Type {
+			case "totp":
+				if authpkg.ValidateTOTP(device.Secret, req.Code) {
+					codeValid = true
+				}
+			case "email":
+				codeHash := sha256Hash(req.Code)
+				valid, err := s.common.ValidateEmailOTP(r.Context(), user.ID, device.ID, codeHash)
+				if err == nil && valid {
+					codeValid = true
+				}
+			}
 
-		switch device.Type {
-		case "totp":
-			if !authpkg.ValidateTOTP(device.Secret, req.Code) {
-				slog.Warn("invalid TOTP code during login", "device_id", device.ID, "user_id", user.ID)
-				writeApiError(w, r, errAuthMFAInvalidCode.WithMessage("Invalid TOTP code"))
-				return
+			// Update last used on success
+			if codeValid {
+				_ = s.common.UpdateMFADeviceLastUsed(r.Context(), device.ID)
 			}
-		case "email":
-			codeHash := sha256Hash(req.Code)
-			valid, err := s.common.ValidateEmailOTP(r.Context(), user.ID, device.ID, codeHash)
-			if err != nil {
-				slog.Error("failed to validate email OTP during login", "device_id", device.ID, "user_id", user.ID, "error", err)
-				writeApiError(w, r, errAuthMFAInvalidCode.WithMessage("Invalid or expired email code"))
-				return
-			}
-			if !valid {
-				slog.Warn("invalid email OTP during login", "device_id", device.ID, "user_id", user.ID)
-				writeApiError(w, r, errAuthMFAInvalidCode.WithMessage("Invalid or expired email code"))
-				return
-			}
-		default:
-			writeApiError(w, r, errValidationFieldInvalid.WithMessage("Unsupported device type"))
-			return
 		}
-
-		// Update last used
-		_ = s.common.UpdateMFADeviceLastUsed(r.Context(), device.ID)
 	} else {
 		writeApiError(w, r, errValidationFieldRequired.WithMessage("Device ID is required"))
 		return
 	}
 
-	// MFA verified — issue full auth token + session
-	slog.Info("MFA validation successful", "user_id", user.ID, "method", func() string { if req.IsRecovery { return "recovery_code" } else { return "device:" + req.DeviceID } }())
+	// ── Handle failure: increment attempt counter ────────────────────
+	if !codeValid {
+		count, err := s.cache.IncrementMFAAttempts(r.Context(), mfaJTI)
+		if err != nil {
+			slog.Error("failed to increment MFA attempts", "jti", mfaJTI, "error", err)
+			writeApiError(w, r, errServerInternal)
+			return
+		}
+
+		if count >= int64(cache.MFAMaxAttempts) {
+			slog.Warn("MFA token exhausted", "jti", mfaJTI, "user_id", user.ID, "attempts", count)
+			writeApiError(w, r, errMFATokenExhausted)
+		} else {
+			slog.Warn("invalid MFA code attempt", "jti", mfaJTI, "user_id", user.ID, "attempt", count,
+				"method", func() string {
+					if req.IsRecovery {
+						return "recovery_code"
+					}
+					return "device:" + req.DeviceID
+				}())
+			writeApiError(w, r, errAuthMFAInvalidCode)
+		}
+		return
+	}
+
+	// ── Success: invalidate MFA session (one-time use) ───────────────
+	_ = s.cache.InvalidateMFASession(r.Context(), mfaJTI)
+
+	slog.Info("MFA validation successful", "user_id", user.ID, "method", func() string {
+		if req.IsRecovery {
+			return "recovery_code"
+		}
+		return "device:" + req.DeviceID
+	}())
 
 	token, jti, err := s.auth.GenerateToken(user.ID)
 	if err != nil {
@@ -659,10 +683,29 @@ func (s *Server) handleSendEmailOTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	userID, err := s.auth.ValidateMFAToken(req.MFAToken)
+	userID, mfaJTI, err := s.auth.ValidateMFAToken(req.MFAToken)
 	if err != nil {
 		slog.Warn("invalid or expired MFA token for email OTP send", "error", err)
 		writeApiError(w, r, errAuthMFAInvalidCode.WithMessage("Invalid or expired MFA token"))
+		return
+	}
+
+	// Validate against Valkey allowlist (fail-closed)
+	if _, err := s.cache.ValidateMFASession(r.Context(), mfaJTI); err != nil {
+		slog.Warn("MFA session not in allowlist for OTP send", "jti", mfaJTI, "error", err)
+		writeApiError(w, r, errMFATokenExhausted)
+		return
+	}
+
+	// Check OTP cooldown (30s per token per device)
+	inCooldown, err := s.cache.CheckOTPCooldown(r.Context(), mfaJTI, req.DeviceID)
+	if err != nil {
+		slog.Error("failed to check OTP cooldown", "jti", mfaJTI, "device_id", req.DeviceID, "error", err)
+		writeApiError(w, r, errServerInternal)
+		return
+	}
+	if inCooldown {
+		writeApiError(w, r, errMFAOTPCooldown)
 		return
 	}
 
@@ -703,6 +746,12 @@ func (s *Server) handleSendEmailOTP(w http.ResponseWriter, r *http.Request) {
 		slog.Error("failed to send email OTP", "user_id", userID, "device_id", device.ID, "email", device.Email, "error", err)
 		writeApiError(w, r, errServerInternal)
 		return
+	}
+
+	// Set OTP cooldown (30s)
+	if err := s.cache.SetOTPCooldown(r.Context(), mfaJTI, req.DeviceID); err != nil {
+		slog.Error("failed to set OTP cooldown", "jti", mfaJTI, "device_id", req.DeviceID, "error", err)
+		// Non-fatal — OTP was already sent successfully
 	}
 
 	slog.Info("email OTP sent successfully", "user_id", userID, "device_id", device.ID, "email", maskEmail(device.Email))

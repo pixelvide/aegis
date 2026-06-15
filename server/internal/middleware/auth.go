@@ -35,7 +35,6 @@ func JTIFromContext(ctx context.Context) string {
 
 // Auth returns middleware that validates the JWT cookie, checks session
 // revocation (cache first, then DB), and injects the user + JTI into context.
-// cache may be nil — falls back to DB-only checks.
 func Auth(authSvc *auth.Service, common *store.CommonStore, sessionCache *cache.Client) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

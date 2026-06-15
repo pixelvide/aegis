@@ -22,6 +22,8 @@ export type ErrorCode =
   | "mfa_invalid_code"
   | "session_revoked"
   | "base_domain_only"
+  | "mfa_token_exhausted"
+  | "mfa_otp_cooldown"
   // token_error
   | "invalid"
   | "expired"
@@ -70,6 +72,8 @@ export const ERROR_CODES: Record<string, ErrorEntry> = {
   "auth_error.mfa_invalid_code": { type: "auth_error", code: "mfa_invalid_code", ref: "E10005", status: 401, message: "Invalid or expired verification code" },
   "auth_error.session_revoked": { type: "auth_error", code: "session_revoked", ref: "E10006", status: 401, message: "Session has been revoked" },
   "auth_error.base_domain_only": { type: "auth_error", code: "base_domain_only", ref: "E10007", status: 403, message: "Authentication is only available on the base domain" },
+  "auth_error.mfa_token_exhausted": { type: "auth_error", code: "mfa_token_exhausted", ref: "E10008", status: 401, message: "Too many failed attempts. Please log in again." },
+  "auth_error.mfa_otp_cooldown": { type: "auth_error", code: "mfa_otp_cooldown", ref: "E10009", status: 429, message: "Please wait before requesting another code" },
 
   // token_error
   "token_error.invalid": { type: "token_error", code: "invalid", ref: "E20001", status: 401, message: "Invalid or revoked token" },

@@ -183,8 +183,15 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		}
 
 		// Password correct but MFA required — issue a short-lived MFA token
-		mfaToken, err := s.auth.GenerateMFAToken(user.ID)
+		mfaToken, mfaJTI, err := s.auth.GenerateMFAToken(user.ID)
 		if err != nil {
+			writeApiError(w, r, errServerInternal)
+			return
+		}
+
+		// Register MFA session in Valkey allowlist (fail-closed)
+		if err := s.cache.RegisterMFASession(r.Context(), mfaJTI, user.ID); err != nil {
+			slog.Error("failed to register MFA session in cache", "user_id", user.ID, "error", err)
 			writeApiError(w, r, errServerInternal)
 			return
 		}

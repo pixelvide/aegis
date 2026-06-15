@@ -36,6 +36,14 @@ var (
 		Type: "auth_error", Code: "base_domain_only", Ref: "E10007",
 		Status: http.StatusForbidden, Message: "Authentication is only available on the base domain",
 	}
+	errMFATokenExhausted = ApiError{
+		Type: "auth_error", Code: "mfa_token_exhausted", Ref: "E10008",
+		Status: http.StatusUnauthorized, Message: "Too many failed attempts. Please log in again.",
+	}
+	errMFAOTPCooldown = ApiError{
+		Type: "auth_error", Code: "mfa_otp_cooldown", Ref: "E10009",
+		Status: http.StatusTooManyRequests, Message: "Please wait before requesting another code",
+	}
 )
 
 // Token errors

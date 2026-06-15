@@ -75,21 +75,16 @@ func run() error {
 	// Initialize email service (SMTP)
 	emailSvc := email.New(cfg.SMTP)
 
-	// Initialize Valkey cache (optional — graceful degradation to DB-only)
-	var cacheClient *cache.Client
-	if cfg.ValkeyURL != "" {
-		cacheClient, err = cache.New(cfg.ValkeyURL)
-		if err != nil {
-			slog.Warn("valkey unavailable, falling back to DB-only session checks",
-				"error", err, "component", "cache")
-			cacheClient = nil
-		} else {
-			defer cacheClient.Close()
-			slog.Info("valkey connected", "addr", cfg.ValkeyURL, "component", "cache")
-		}
-	} else {
-		slog.Info("valkey not configured, using DB-only session checks", "component", "cache")
+	// Initialize Valkey cache (required — used for session checks and MFA brute-force protection)
+	if cfg.ValkeyURL == "" {
+		return fmt.Errorf("VALKEY_URL is required (e.g. valkey:6379)")
 	}
+	cacheClient, err := cache.New(cfg.ValkeyURL)
+	if err != nil {
+		return fmt.Errorf("valkey: %w", err)
+	}
+	defer cacheClient.Close()
+	slog.Info("valkey connected", "addr", cfg.ValkeyURL, "component", "cache")
 
 	// Initialize OTel metrics with Prometheus exporter
 	metrics, metricsHandler, metricsShutdown := api.InitMetrics(db)
