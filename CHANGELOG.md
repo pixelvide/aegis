@@ -1,5 +1,37 @@
 # Changelog
 
+## [0.2.0](https://github.com/pixelvide/aegis/compare/v0.1.1...v0.2.0) (2026-06-15)
+
+
+### ⚠ BREAKING CHANGES
+
+* **api:** The X-Org-ID header is no longer accepted. Org context is now resolved exclusively from the request Host header (subdomain or custom domain). AEGIS_BASE_DOMAIN defaults to lvh.me for local dev.
+
+### Features
+
+* **agent:** add parallel scan pipeline with chunking, dedup, and tiered models ([a1930b4](https://github.com/pixelvide/aegis/commit/a1930b439d11c4a76bde8a37f16b28976a249d43))
+* **api,ui:** add scan lifecycle endpoints and scans page ([764a94f](https://github.com/pixelvide/aegis/commit/764a94f32a0c644274e7351201a092825866ab3f))
+* **api:** add MFA brute-force protection with Valkey-backed session allowlist ([45248e8](https://github.com/pixelvide/aegis/commit/45248e86e86d7c858d713735a6f7fc4b188ae815))
+* **api:** enforce require_mfa org feature flag in TenantResolver ([6cca496](https://github.com/pixelvide/aegis/commit/6cca496b4902883fde0456b58258fa5cfa776427))
+
+
+### Bug Fixes
+
+* **api:** add error logging to agent ingest and fix upsert table qualifier ([b7f1342](https://github.com/pixelvide/aegis/commit/b7f134295ec47a7686ff4aca24cfad4e775f2bab))
+* **ci:** remove LOCALHARNESS_PAT — localharness is a public repo ([cb3db7d](https://github.com/pixelvide/aegis/commit/cb3db7d773acade37cc95fdf5448b8fcb217f6ec))
+* **ui:** remove non-functional UI elements and fix broken links ([d0c77d5](https://github.com/pixelvide/aegis/commit/d0c77d588c2ac4e661d7e684d666781bdd36480f))
+* **ui:** wait for project context before fetching findings data ([2d85110](https://github.com/pixelvide/aegis/commit/2d85110d26631c9e77c195d558b54116578d7443))
+
+
+### Documentation
+
+* update all references from X-Org-Slug to X-Org-ID ([a5fde0b](https://github.com/pixelvide/aegis/commit/a5fde0bb17b999798f1754a0a31af055e4ae1cf1))
+
+
+### Miscellaneous
+
+* **api:** remove X-Org-ID header, resolve orgs from subdomain only ([b2e2b34](https://github.com/pixelvide/aegis/commit/b2e2b34c804762639fbcd907bfbc3e8dfd1ed22a))
+
 ## [0.1.1](https://github.com/pixelvide/aegis/compare/v0.1.0...v0.1.1) (2026-06-12)
 
 
